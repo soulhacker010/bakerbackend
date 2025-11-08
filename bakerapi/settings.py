@@ -164,3 +164,8 @@ TWO_FACTOR_RESEND_INTERVAL_SECONDS = int(os.environ.get('TWO_FACTOR_RESEND_INTER
 
 # Frontend base URL used when generating respondent links for email invites
 FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:5173').rstrip('/')
+
+
+# Password reset defaults
+PASSWORD_RESET_TOKEN_TTL_MINUTES = int(os.environ.get('PASSWORD_RESET_TOKEN_TTL_MINUTES', 24 * 60))
+PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS = int(os.environ.get('PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS', 5 * 60))

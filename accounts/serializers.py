@@ -1,7 +1,7 @@
 from django.contrib.auth import authenticate
 from rest_framework import serializers
 
-from .models import User
+from .models import PasswordResetToken, User
 
 
 PROFILE_FIELDS = (
@@ -92,3 +92,54 @@ class TwoFactorVerifySerializer(serializers.Serializer):
 
 class TwoFactorResendSerializer(serializers.Serializer):
     challenge_id = serializers.UUIDField()
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+
+class PasswordResetValidateSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    signature = serializers.CharField(max_length=512)
+
+    def validate(self, attrs):
+        token_id = attrs["token"]
+        raw_token = attrs["signature"]
+
+        token = PasswordResetToken.objects.filter(token_id=token_id).select_related("user").first()
+        if not token:
+            raise serializers.ValidationError("Invalid or expired reset link.")
+
+        from .password_reset import verify_password_reset_token
+
+        if not verify_password_reset_token(token, raw_token):
+            raise serializers.ValidationError("Invalid or expired reset link.")
+
+        attrs["token_obj"] = token
+        attrs["user"] = token.user
+        attrs["raw_token"] = raw_token
+        return attrs
+
+
+class PasswordResetCompleteSerializer(serializers.Serializer):
+    token = serializers.UUIDField()
+    signature = serializers.CharField(max_length=512)
+    password = serializers.CharField(min_length=8, write_only=True)
+
+    def validate(self, attrs):
+        token_id = attrs["token"]
+        raw_token = attrs["signature"]
+
+        token = PasswordResetToken.objects.filter(token_id=token_id).select_related("user").first()
+        if not token:
+            raise serializers.ValidationError("Invalid or expired reset link.")
+
+        from .password_reset import verify_password_reset_token
+
+        if not verify_password_reset_token(token, raw_token):
+            raise serializers.ValidationError("Invalid or expired reset link.")
+
+        attrs["token_obj"] = token
+        attrs["user"] = token.user
+        attrs["raw_token"] = raw_token
+        return attrs

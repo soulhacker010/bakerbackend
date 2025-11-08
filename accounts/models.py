@@ -107,3 +107,36 @@ class TwoFactorChallenge(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - repr utility
         return f"TwoFactorChallenge<{self.challenge_id}> for {self.user_id}"
+
+
+class PasswordResetToken(models.Model):
+    user = models.ForeignKey(
+        User,
+        related_name="password_reset_tokens",
+        on_delete=models.CASCADE,
+    )
+    token_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    token_hash = models.CharField(max_length=128, unique=True)
+    token_salt = models.CharField(max_length=32)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=("user", "created_at")),
+            models.Index(fields=("expires_at",)),
+            models.Index(fields=("token_hash",)),
+        ]
+        ordering = ("-created_at",)
+
+    def mark_used(self) -> None:
+        self.used_at = timezone.now()
+        self.save(update_fields=["used_at", "updated_at"])
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at
+
+    def __str__(self) -> str:  # pragma: no cover - repr utility
+        return f"PasswordResetToken<{self.pk}> for {self.user_id}"

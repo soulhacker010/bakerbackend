@@ -8,11 +8,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .email_feedback import FeedbackEmail, FeedbackEmailError, send_feedback_email
+from .email_password_reset import PasswordResetEmail, PasswordResetEmailError, send_password_reset_email
 from .email_two_factor import TwoFactorEmail, TwoFactorEmailError, send_two_factor_email
-from .models import TwoFactorChallenge
+from .models import PasswordResetToken, TwoFactorChallenge, User
 from .serializers import (
     FeedbackSubmissionSerializer,
     LoginSerializer,
+    PasswordResetCompleteSerializer,
+    PasswordResetRequestSerializer,
+    PasswordResetValidateSerializer,
     ProfileSerializer,
     SignupSerializer,
     TwoFactorResendSerializer,
@@ -24,6 +28,7 @@ from .two_factor import (
     regenerate_two_factor_challenge,
     verify_two_factor_code,
 )
+from .password_reset import invalidate_password_reset_tokens, issue_password_reset_token
 
 
 class SignupView(generics.CreateAPIView):
@@ -78,6 +83,112 @@ class LoginView(APIView):
             "ttlSeconds": settings.TWO_FACTOR_CODE_TTL_MINUTES * 60,
         }
         return Response(payload, status=status.HTTP_202_ACCEPTED)
+
+
+class PasswordResetRequestView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"].strip().lower()
+        user = User.objects.filter(email__iexact=email).first()
+
+        response_detail = "If an account exists for that email, you will receive a reset link shortly."
+
+        if not user:
+            return Response({"detail": response_detail}, status=status.HTTP_202_ACCEPTED)
+
+        token, raw_token, created = issue_password_reset_token(user)
+
+        if not token:
+            return Response({"detail": response_detail}, status=status.HTTP_202_ACCEPTED)
+
+        if raw_token is not None:
+            reset_url = (
+                f"{settings.FRONTEND_BASE_URL}/reset-password?token={token.token_id}&signature={raw_token}"
+            )
+            recipient_name = f"{user.first_name} {user.last_name}".strip() or user.email
+
+            try:
+                send_password_reset_email(
+                    PasswordResetEmail(
+                        recipient=user.email,
+                        recipient_name=recipient_name,
+                        reset_url=reset_url,
+                        expires_minutes=getattr(settings, "PASSWORD_RESET_TOKEN_TTL_MINUTES", 24 * 60),
+                    )
+                )
+            except PasswordResetEmailError as exc:
+                token.delete()
+                return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        if not created:
+            # Inform the client to wait before retrying, without leaking account existence.
+            retry_after = getattr(settings, "PASSWORD_RESET_REQUEST_COOLDOWN_SECONDS", 5 * 60)
+            return Response(
+                {
+                    "detail": response_detail,
+                    "retryAfter": retry_after,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        return Response({"detail": response_detail}, status=status.HTTP_202_ACCEPTED)
+
+
+class PasswordResetValidateView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetValidateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        token: PasswordResetToken = serializer.validated_data["token_obj"]
+
+        return Response(
+            {
+                "detail": "Reset link is valid.",
+                "token": str(token.token_id),
+                "expiresAt": token.expires_at.astimezone(dt_timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z"),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class PasswordResetCompleteView(APIView):
+    permission_classes = (permissions.AllowAny,)
+
+    def post(self, request, *args, **kwargs):
+        serializer = PasswordResetCompleteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        token: PasswordResetToken = serializer.validated_data["token_obj"]
+        user = serializer.validated_data["user"]
+        password = serializer.validated_data["password"]
+
+        user.set_password(password)
+        user.save(update_fields=["password"])
+
+        token.mark_used()
+        invalidate_password_reset_tokens(user, exclude_id=token.pk)
+
+        # Rotate auth tokens for security and return a fresh token.
+        Token.objects.filter(user=user).delete()
+        auth_token, _ = Token.objects.get_or_create(user=user)
+
+        return Response(
+            {
+                "detail": "Password updated successfully.",
+                "token": auth_token.key,
+                "user": UserSerializer(user).data,
+            },
+            status=status.HTTP_200_OK,
+        )
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):

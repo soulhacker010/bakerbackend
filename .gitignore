@@ -24,8 +24,10 @@ Thumbs.db
 # Python virtual environments (if any)
 venv/
 ENV/
+.venv/
 .env.bak/
 
 # Other
 *.bak
 *.swp
+

@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, Iterable, List, Optional
 
 from django.db import transaction
@@ -448,15 +449,20 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
         configuration: Dict[str, Any],
         responses: Dict[str, Any],
     ) -> tuple[Dict[str, Any], List[str]]:
-        total = 0.0
-        for value in responses.values():
+        def accumulate(value: Any) -> float:
             if isinstance(value, (int, float)):
-                total += float(value)
-            elif isinstance(value, str):
+                return float(value)
+            if isinstance(value, str):
                 try:
-                    total += float(value)
+                    return float(value)
                 except ValueError:
-                    continue
+                    match = re.search(r"-?\d+(?:\.\d+)?", value)
+                    return float(match.group()) if match else 0.0
+            if isinstance(value, (list, tuple)):
+                return sum(accumulate(item) for item in value)
+            return 0.0
+
+        total = sum(accumulate(value) for value in responses.values())
 
         band_id: str | None = None
         band_label: str | None = None

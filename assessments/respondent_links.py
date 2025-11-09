@@ -8,6 +8,7 @@ from typing import Iterable, List, Optional
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import ObjectDoesNotExist
+from django.db.models import Q
 from django.utils.translation import gettext_lazy as _
 
 from clients.models import Client
@@ -82,7 +83,9 @@ def _validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> Lis
         raise RespondentLinkError("At least one assessment must be selected.")
 
     assessments = list(
-        Assessment.objects.filter(slug__in=slugs, status=Assessment.Status.PUBLISHED, created_by_id=owner_id)
+        Assessment.objects.filter(slug__in=slugs).filter(
+            Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=owner_id)
+        )
     )
     found_slugs = {assessment.slug for assessment in assessments}
     missing = [slug for slug in slugs if slug not in found_slugs]

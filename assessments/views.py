@@ -215,6 +215,7 @@ class RespondentLinkScheduleView(APIView):
         "three-months": 90,
     }
     _MAX_CYCLES = 99
+    _MINUTES_BUFFER = 5
 
     def post(self, request, *args, **kwargs):
         payload = request.data or {}
@@ -289,7 +290,7 @@ class RespondentLinkScheduleView(APIView):
 
         now = timezone.now()
         if first_run_dt < now:
-            first_run_dt = now + timedelta(minutes=1)
+            first_run_dt = now + timedelta(minutes=self._MINUTES_BUFFER)
 
         delta_days = self._FREQUENCY_MAP.get(frequency, 0)
 
@@ -384,6 +385,56 @@ class RespondentLinkResolveView(APIView):
         if not token:
             return Response({"detail": "A respondent token is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        try:
+            link_payload = resolve_link_token(token)
+        except RespondentLinkError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        assessments = list(
+            Assessment.objects.filter(slug__in=link_payload.assessments).filter(
+                Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=link_payload.owner_id)
+            )
+        )
+        assessment_payload = [
+            {
+                "slug": assessment.slug,
+                "title": assessment.title,
+                "summary": assessment.summary,
+                "description": assessment.description,
+                "category": assessment.category.slug if assessment.category else None,
+            }
+            for assessment in assessments
+        ]
+
+        client_data = None
+        if link_payload.client_slug:
+            client = Client.objects.filter(owner_id=link_payload.owner_id, slug=link_payload.client_slug).first()
+            if not client:
+                return Response(
+                    {"detail": "The linked client could not be found. Request a new invitation."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            client_data = {
+                "slug": client.slug,
+                "firstName": client.first_name,
+                "lastName": client.last_name,
+                "email": client.email,
+                "dob": client.dob.isoformat() if client.dob else None,
+                "gender": client.gender,
+            }
+
+        return Response(
+            {
+                "token": token,
+                "mode": link_payload.mode,
+                "shareResults": link_payload.share_results,
+                "pendingClient": link_payload.pending_client,
+                "assessments": assessment_payload,
+                "client": client_data,
+            }
+        )
+
 
 class RespondentLinkScheduleRunListView(APIView):
     permission_classes = (permissions.IsAuthenticated,)
@@ -433,53 +484,6 @@ class RespondentLinkScheduleDetailView(APIView):
 
         schedule.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-
-        try:
-            link_payload = resolve_link_token(token)
-        except RespondentLinkError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        assessments = list(
-            Assessment.objects.filter(slug__in=link_payload.assessments, status=Assessment.Status.PUBLISHED)
-        )
-        assessment_payload = [
-            {
-                "slug": assessment.slug,
-                "title": assessment.title,
-                "summary": assessment.summary,
-                "description": assessment.description,
-                "category": assessment.category.slug if assessment.category else None,
-            }
-            for assessment in assessments
-        ]
-
-        client_data = None
-        if link_payload.client_slug:
-            client = Client.objects.filter(owner_id=link_payload.owner_id, slug=link_payload.client_slug).first()
-            if not client:
-                return Response(
-                    {"detail": "The linked client could not be found. Request a new invitation."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            client_data = {
-                "slug": client.slug,
-                "firstName": client.first_name,
-                "lastName": client.last_name,
-                "email": client.email,
-                "dob": client.dob.isoformat() if client.dob else None,
-                "gender": client.gender,
-            }
-
-        return Response(
-            {
-                "token": token,
-                "mode": link_payload.mode,
-                "shareResults": link_payload.share_results,
-                "pendingClient": link_payload.pending_client,
-                "assessments": assessment_payload,
-                "client": client_data,
-            }
-        )
 
 
 class RespondentLinkClientView(APIView):

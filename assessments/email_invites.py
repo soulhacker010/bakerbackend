@@ -110,7 +110,8 @@ def send_assessment_invite_email(content: InviteContent) -> None:
     try:
         resend.Emails.send(payload)
     except Exception as exc:  # pragma: no cover - network failure or API error
-        raise EmailInviteError("Unable to send assessment invite email.") from exc
+        reason = getattr(exc, "message", str(exc)) or "Unknown error"
+        raise EmailInviteError(f"Unable to send assessment invite email: {reason}") from exc
 
 
 def build_invite_url(token: str) -> str:

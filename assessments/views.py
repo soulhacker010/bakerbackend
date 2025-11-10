@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, time, timedelta, timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
@@ -10,6 +11,9 @@ from rest_framework.views import APIView
 from clients.models import Client
 from clients.serializers import generate_unique_client_slug, update_client_group_cache
 from django.utils import timezone
+
+from notifications.models import Notification
+from notifications.services import create_notification
 
 from .email_invites import EmailInviteError, InviteContent, build_invite_url, send_assessment_invite_email
 from .models import (
@@ -34,6 +38,9 @@ from .respondent_links import (
     refresh_token_for_client,
     resolve_link_token,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AssessmentCategoryViewSet(viewsets.ModelViewSet):
@@ -360,6 +367,24 @@ class RespondentLinkScheduleView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         invite_preview_url = build_invite_url(runs[0]["token"]) if runs else None
+
+        try:
+            client_name = str(client)
+            create_notification(
+                recipient=request.user,
+                event_type=Notification.EventType.SCHEDULE_SENT,
+                title="Assessment schedule created",
+                body=f"A schedule for {client_name} has been created.",
+                payload={
+                    "scheduleId": str(schedule.reference),
+                    "clientSlug": client.slug,
+                    "clientName": client_name,
+                    "assessmentSlugs": list(assessments),
+                    "firstRunAt": runs[0]["scheduledAt"] if runs else None,
+                },
+            )
+        except Exception:  # pragma: no cover - notifications must not block scheduling
+            logger.exception("Unable to create schedule notification")
 
         return Response(
             {

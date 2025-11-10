@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/auth/', include('accounts.urls', namespace='accounts')),
     path('api/', include('clients.urls', namespace='clients')),
     path('api/', include('assessments.urls', namespace='assessments')),
+    path('api/', include('notifications.urls', namespace='notifications')),
 ]

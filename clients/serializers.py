@@ -1,9 +1,15 @@
+import logging
 from typing import List
 
 from django.utils.text import slugify
 from rest_framework import serializers
 
 from .models import Client, ClientGroup, ClientGroupMembership
+from notifications.models import Notification
+from notifications.services import create_notification
+
+
+logger = logging.getLogger(__name__)
 
 
 def generate_unique_client_slug(owner_id: int, base: str) -> str:
@@ -209,6 +215,22 @@ class ClientSerializer(serializers.ModelSerializer):
             self._sync_group_memberships(client, group_slugs)
         else:
             update_client_group_cache(client)
+
+        client_name = str(client)
+        try:
+            create_notification(
+                recipient=owner,
+                event_type=Notification.EventType.CLIENT_CREATED,
+                title="New client added",
+                body=f"{client_name} has been added to your client list.",
+                payload={
+                    "clientSlug": client.slug,
+                    "clientName": client_name,
+                    "clientEmail": client.email,
+                },
+            )
+        except Exception:  # pragma: no cover - notifications should not block client creation
+            logger.exception("Unable to create notification for client creation")
         return client
 
 

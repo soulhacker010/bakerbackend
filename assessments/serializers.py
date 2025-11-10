@@ -1,3 +1,4 @@
+import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -7,6 +8,8 @@ from django.utils.text import slugify
 from rest_framework import serializers
 
 from clients.models import Client
+from notifications.models import Notification
+from notifications.services import create_notifications
 
 from .models import (
     Assessment,
@@ -18,6 +21,9 @@ from .models import (
     RespondentInviteSchedule,
     RespondentInviteScheduleRun,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def generate_unique_assessment_slug(base: str) -> str:
@@ -408,7 +414,7 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
         if request and getattr(request, "user", None) and request.user.is_authenticated:
             submitted_by = request.user
 
-        return AssessmentResponse.objects.create(
+        instance = AssessmentResponse.objects.create(
             assessment=assessment,
             client=client,
             submitted_by=submitted_by,
@@ -416,6 +422,43 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             score=score_payload,
             highlights=highlights,
         )
+
+        recipients: list = []
+        seen_ids: set[int] = set()
+
+        def add_recipient(user) -> None:
+            if user and getattr(user, "pk", None) and user.pk not in seen_ids:
+                seen_ids.add(user.pk)
+                recipients.append(user)
+
+        add_recipient(getattr(client, "owner", None))
+        add_recipient(getattr(assessment, "created_by", None))
+        add_recipient(submitted_by)
+
+        if recipients:
+            assessment_title = assessment.title
+            client_name = client.__str__() if client else None
+            try:
+                create_notifications(
+                    recipients=recipients,
+                    event_type=Notification.EventType.ASSESSMENT_COMPLETED,
+                    title=f"Assessment completed: {assessment_title}",
+                    body=(
+                        f"{client_name} completed {assessment_title}."
+                        if client_name
+                        else f"{assessment_title} has a new response."
+                    ),
+                    payload={
+                        "assessmentSlug": assessment.slug,
+                        "responseId": instance.id,
+                        "clientSlug": getattr(client, "slug", None),
+                        "clientName": client_name,
+                    },
+                )
+            except Exception:  # pragma: no cover - notifications must not block response submission
+                logger.exception("Unable to create assessment completion notifications")
+
+        return instance
 
     def get_client(self, obj: AssessmentResponse) -> Dict[str, str] | None:
         if not obj.client:

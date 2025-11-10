@@ -22,6 +22,8 @@ PROFILE_FIELDS = (
     "reply_email",
     "redirect_link",
     "date_joined",
+    "is_staff",
+    "is_superuser",
 )
 
 
@@ -29,7 +31,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = PROFILE_FIELDS
-        read_only_fields = ("id", "email", "date_joined")
+        read_only_fields = ("id", "email", "date_joined", "is_staff", "is_superuser")
 
 
 class SignupSerializer(serializers.ModelSerializer):
@@ -49,7 +51,7 @@ class ProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = PROFILE_FIELDS
-        read_only_fields = ("id", "email", "date_joined")
+        read_only_fields = ("id", "email", "date_joined", "is_staff", "is_superuser")
 
 
 class LoginSerializer(serializers.Serializer):

@@ -51,6 +51,7 @@ class Assessment(models.Model):
     duration_minutes = models.PositiveIntegerField(blank=True, null=True)
     age_range = models.CharField(max_length=120, blank=True)
     delivery_modes = models.JSONField(default=list, blank=True)
+    clinician_notes = models.TextField(blank=True)
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     published_at = models.DateTimeField(blank=True, null=True)
@@ -121,6 +122,11 @@ class AssessmentQuestion(models.Model):
         default=dict,
         blank=True,
         help_text="Additional metadata such as options, scale anchors, validation.",
+    )
+    domain = models.CharField(
+        max_length=120,
+        default="general",
+        help_text="Cognitive or skill domain this question targets.",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)

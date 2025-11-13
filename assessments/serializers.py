@@ -106,21 +106,27 @@ class RespondentInviteScheduleRunSerializer(serializers.ModelSerializer):
         return (f"{client.first_name} {client.last_name}".strip() or client.email or client.slug)
 
 
+QUESTION_FIELDS: tuple[str, ...] = (
+    "id",
+    "identifier",
+    "order",
+    "text",
+    "help_text",
+    "response_type",
+    "required",
+    "config",
+    "created_at",
+    "updated_at",
+)
+
+if hasattr(AssessmentQuestion, "domain"):
+    QUESTION_FIELDS = QUESTION_FIELDS + ("domain",)
+
+
 class AssessmentQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = AssessmentQuestion
-        fields = (
-            "id",
-            "identifier",
-            "order",
-            "text",
-            "help_text",
-            "response_type",
-            "required",
-            "config",
-            "created_at",
-            "updated_at",
-        )
+        fields = QUESTION_FIELDS
         read_only_fields = ("id", "created_at", "updated_at")
 
 
@@ -155,6 +161,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "summary",
             "description",
             "highlights",
+            "clinician_notes",
             "duration_minutes",
             "age_range",
             "delivery_modes",
@@ -279,6 +286,19 @@ class AssessmentSerializer(serializers.ModelSerializer):
                 existing_question = existing_by_identifier[identifier]
                 question_id = existing_question.id
 
+            config_payload = payload.get("config") or {}
+            if not isinstance(config_payload, dict):
+                config_payload = {}
+
+            domain_value = payload.get("domain")
+            if domain_value is None and isinstance(config_payload, dict):
+                domain_value = config_payload.get("domain")
+            if domain_value is None and existing_question and hasattr(existing_question, "domain"):
+                domain_value = getattr(existing_question, "domain")
+
+            if domain_value is None:
+                domain_value = "general"
+
             defaults = {
                 "identifier": identifier,
                 "order": payload.get("order", index + 1),
@@ -289,8 +309,11 @@ class AssessmentSerializer(serializers.ModelSerializer):
                     AssessmentQuestion.ResponseType.FREE_TEXT,
                 ),
                 "required": payload.get("required", True),
-                "config": payload.get("config", {}),
+                "config": config_payload,
             }
+
+            if hasattr(AssessmentQuestion, "domain"):
+                defaults["domain"] = domain_value
 
             if existing_question:
                 question = existing_question
@@ -353,6 +376,7 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
     )
     responses = ResponseItemSerializer(many=True, write_only=True)
     client = serializers.SerializerMethodField(read_only=True)
+    answers = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = AssessmentResponse
@@ -365,8 +389,9 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             "score",
             "highlights",
             "submitted_at",
+            "answers",
         )
-        read_only_fields = ("id", "client", "score", "highlights", "submitted_at")
+        read_only_fields = ("id", "client", "score", "highlights", "submitted_at", "answers")
 
     def validate_responses(self, value: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         identifiers = set()
@@ -468,6 +493,90 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             "slug": obj.client.slug,
             "name": full_name,
         }
+
+    def get_answers(self, obj: AssessmentResponse) -> list[dict[str, Any]]:
+        responses_payload = obj.responses if isinstance(obj.responses, dict) else {}
+        remaining_payload = dict(responses_payload)
+        results: list[dict[str, Any]] = []
+
+        def normalise_to_list(value: Any) -> list[str]:
+            if isinstance(value, (list, tuple)):
+                return [self._stringify_answer(item) for item in value if self._stringify_answer(item)]
+            string_value = self._stringify_answer(value)
+            return [string_value] if string_value else []
+
+        questions = list(obj.assessment.questions.all().order_by("order"))
+
+        def resolve_payload(question: AssessmentQuestion) -> tuple[Any, str] | tuple[None, None]:
+            identifier = question.identifier
+            if identifier in remaining_payload:
+                return remaining_payload.pop(identifier), identifier
+
+            order = getattr(question, "order", None)
+            if isinstance(order, int):
+                prefix = f"q{order}"
+                for candidate in list(remaining_payload.keys()):
+                    if candidate.startswith(prefix):
+                        return remaining_payload.pop(candidate), candidate
+
+            return None, None
+
+        for question in questions:
+            raw_value, matched_identifier = resolve_payload(question)
+            if matched_identifier is None:
+                continue
+
+            selected_values = normalise_to_list(raw_value)
+
+            config = question.config if isinstance(question.config, dict) else {}
+            raw_options = config.get("options") if isinstance(config, dict) else None
+            options = []
+            if isinstance(raw_options, list):
+                options = [self._stringify_answer(option) or str(option) for option in raw_options]
+
+            if not selected_values and not options and raw_value in (None, "", [], {}):
+                continue
+
+            results.append(
+                {
+                    "identifier": matched_identifier,
+                    "question": question.text,
+                    "response_type": question.response_type,
+                    "options": options,
+                    "selected": selected_values,
+                    "value": raw_value,
+                }
+            )
+
+        for identifier, raw_value in remaining_payload.items():
+            selected_values = normalise_to_list(raw_value)
+            if not selected_values and raw_value in (None, "", [], {}):
+                continue
+
+            results.append(
+                {
+                    "identifier": identifier,
+                    "question": identifier,
+                    "response_type": AssessmentQuestion.ResponseType.FREE_TEXT,
+                    "options": [],
+                    "selected": selected_values,
+                    "value": raw_value,
+                }
+            )
+
+        return results
+
+    @staticmethod
+    def _stringify_answer(value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return str(value)
 
     def _calculate_score(
         self,

@@ -1,9 +1,17 @@
 """Django settings for bakerapi project."""
 
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+
+try:  # pragma: no cover - optional dependency
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+except ImportError:  # pragma: no cover - sentry optional
+    sentry_sdk = None
+    DjangoIntegration = None
 
 try:  # pragma: no cover - local development helper
     from dotenv import load_dotenv
@@ -28,10 +36,31 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-$b=pmh)5o0s+ebx5@d3ha
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "false").lower() in {"1", "true", "yes", "on"}
 
+SIGNUP_ENABLED = os.environ.get("SIGNUP_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN", "").strip()
+SENTRY_ENVIRONMENT = os.environ.get(
+    "SENTRY_ENVIRONMENT",
+    "development" if DEBUG else "production",
+)
+SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
+SENTRY_PROFILES_SAMPLE_RATE = float(os.environ.get("SENTRY_PROFILES_SAMPLE_RATE", "0.0"))
+
 raw_allowed_hosts = os.environ.get("ALLOWED_HOSTS", "")
 ALLOWED_HOSTS = [host.strip() for host in raw_allowed_hosts.split(",") if host.strip()]
 if DEBUG and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
+
+
+if SENTRY_DSN and sentry_sdk is not None and DjangoIntegration is not None:  # pragma: no cover - external service
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        profiles_sample_rate=SENTRY_PROFILES_SAMPLE_RATE,
+        environment=SENTRY_ENVIRONMENT,
+        send_default_pii=False,
+    )
 
 
 # Application definition
@@ -45,7 +74,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'corsheaders',
     'rest_framework',
-    'rest_framework.authtoken',
+    'rest_framework_simplejwt.token_blacklist',
     'accounts',
     'clients',
     'assessments',
@@ -89,40 +118,108 @@ WSGI_APPLICATION = 'bakerapi.wsgi.application'
 
 default_database_url = os.environ.get("DATABASE_URL", f"sqlite:///{BASE_DIR / 'db.sqlite3'}")
 
+if not DEBUG and "DATABASE_URL" not in os.environ:
+    raise RuntimeError("DATABASE_URL must be set when DEBUG is False.")
+
+db_ssl_required = os.environ.get(
+    "DATABASE_SSL_REQUIRE",
+    "true" if not DEBUG else "false",
+).lower() in {"1", "true", "yes", "on"}
+
+database_config = dj_database_url.parse(
+    default_database_url,
+    conn_max_age=600,
+    ssl_require=db_ssl_required,
+)
+
+if db_ssl_required and database_config.get("ENGINE", "").endswith("postgresql"):
+    options = database_config.setdefault("OPTIONS", {})
+    options.setdefault("sslmode", "require")
+
 DATABASES = {
-    'default': dj_database_url.parse(default_database_url, conn_max_age=600, ssl_require=os.environ.get('RENDER', '').lower() == 'true')
+    'default': database_config
 }
 
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.TokenAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': os.environ.get('DRF_THROTTLE_USER', '200/min'),
+        'anon': os.environ.get('DRF_THROTTLE_ANON', '50/min'),
+        'auth-login': os.environ.get('DRF_THROTTLE_AUTH_LOGIN', '10/min'),
+        'auth-2fa': os.environ.get('DRF_THROTTLE_AUTH_2FA', '20/min'),
+        'auth-refresh': os.environ.get('DRF_THROTTLE_AUTH_REFRESH', '30/min'),
+        'auth-logout': os.environ.get('DRF_THROTTLE_AUTH_LOGOUT', '30/min'),
+        'respondent-link': os.environ.get('DRF_THROTTLE_RESPONDENT_LINK', '30/min'),
+        'respondent-link-client': os.environ.get('DRF_THROTTLE_RESPONDENT_LINK_CLIENT', '20/hour'),
+        'respondent-assessment-detail': os.environ.get('DRF_THROTTLE_RESPONDENT_ASSESSMENT_DETAIL', '30/min'),
+        'respondent-assessment-submit': os.environ.get('DRF_THROTTLE_RESPONDENT_ASSESSMENT_SUBMIT', '10/min'),
+    },
 }
 
-default_cors_origins = {
-    'http://127.0.0.1:5173',
-    'http://localhost:5173',
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=int(os.environ.get('JWT_ACCESS_MINUTES', '15'))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=int(os.environ.get('JWT_REFRESH_DAYS', '7'))),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
 }
 
-FRONTEND_BASE_URL = os.environ.get('FRONTEND_BASE_URL', 'http://localhost:5173').rstrip('/')
-if FRONTEND_BASE_URL:
-    default_cors_origins.add(FRONTEND_BASE_URL)
+default_cors_origins: set[str] = set()
+
+raw_frontend_base_urls = os.environ.get('FRONTEND_BASE_URL', '')
+frontend_base_urls: list[str] = []
+for origin in raw_frontend_base_urls.split(','):
+    cleaned = origin.strip().rstrip('/')
+    if cleaned:
+        frontend_base_urls.append(cleaned)
+        default_cors_origins.add(cleaned)
+
+FRONTEND_BASE_URL = frontend_base_urls[0] if frontend_base_urls else ''
+
+if DEBUG:
+    default_cors_origins.update(
+        {
+            'http://127.0.0.1:5173',
+            'http://localhost:5173',
+        }
+    )
 
 extra_cors = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 for origin in extra_cors.split(','):
     cleaned = origin.strip().rstrip('/')
     if cleaned:
         default_cors_origins.add(cleaned)
+        if not FRONTEND_BASE_URL:
+            FRONTEND_BASE_URL = cleaned
+
+if not FRONTEND_BASE_URL:
+    FRONTEND_BASE_URL = 'http://localhost:5173' if DEBUG else ''
 
 CORS_ALLOWED_ORIGINS = sorted(default_cors_origins)
 
 CSRF_TRUSTED_ORIGINS = [origin for origin in CORS_ALLOWED_ORIGINS if origin.startswith('https://')]
 
 CORS_ALLOW_CREDENTIALS = True
+
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = int(os.environ.get('SECURE_HSTS_SECONDS', 60 * 60 * 24 * 30))
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators

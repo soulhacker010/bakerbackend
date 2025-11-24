@@ -3,11 +3,13 @@ from django.urls import path
 from .views import (
     FeedbackSubmissionView,
     LoginView,
+    LogoutView,
     PasswordResetCompleteView,
     PasswordResetRequestView,
     PasswordResetValidateView,
     ProfileView,
     SignupView,
+    TokenRefreshView,
     TwoFactorResendView,
     TwoFactorVerifyView,
 )
@@ -24,4 +26,6 @@ urlpatterns = [
     path("password/reset/complete/", PasswordResetCompleteView.as_view(), name="password-reset-complete"),
     path("2fa/verify/", TwoFactorVerifyView.as_view(), name="two-factor-verify"),
     path("2fa/resend/", TwoFactorResendView.as_view(), name="two-factor-resend"),
+    path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
+    path("logout/", LogoutView.as_view(), name="logout"),
 ]

@@ -251,3 +251,43 @@ class RespondentInviteScheduleRun(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - debug helper
         return f"Run for schedule {self.schedule_id} at {self.scheduled_at.isoformat()}"
+
+
+class RespondentInvite(models.Model):
+    token = models.CharField(max_length=255, unique=True)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="respondent_invites",
+        on_delete=models.CASCADE,
+    )
+    assessments = models.JSONField(help_text="Assessment slugs embedded in this invitation")
+    mode = models.CharField(max_length=20)
+    client = models.ForeignKey(
+        Client,
+        related_name="respondent_invites",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    share_results = models.BooleanField(default=False)
+    pending_client = models.BooleanField(default=False)
+    issued_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    max_uses = models.PositiveSmallIntegerField(default=1)
+    uses = models.PositiveSmallIntegerField(default=0)
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        indexes = (
+            models.Index(fields=("token",)),
+            models.Index(fields=("owner", "issued_at")),
+            models.Index(fields=("expires_at",)),
+        )
+
+    def mark_used(self) -> None:
+        self.uses += 1
+        self.used_at = timezone.now()
+        self.save(update_fields=["uses", "used_at"])
+
+    def is_expired(self) -> bool:
+        return timezone.now() >= self.expires_at

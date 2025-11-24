@@ -2,21 +2,26 @@
 from __future__ import annotations
 
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import datetime, timedelta
 from typing import Iterable, List, Optional
 
 from django.conf import settings
 from django.core import signing
 from django.core.exceptions import ObjectDoesNotExist
+from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
 from clients.models import Client
 
-from .models import Assessment
+from .models import Assessment, RespondentInvite
 
 RESPONDENT_LINK_SALT = "assessments.respondent-link.v1"
 RESPONDENT_LINK_MAX_AGE_SECONDS = getattr(settings, "RESPONDENT_LINK_MAX_AGE_SECONDS", 60 * 60 * 24 * 14)
+RESPONDENT_LINK_DEFAULT_TTL_HOURS = getattr(settings, "RESPONDENT_LINK_TTL_HOURS", 48)
+RESPONDENT_LINK_DEFAULT_MAX_USES = getattr(settings, "RESPONDENT_LINK_MAX_USES", 1)
 
 
 @dataclass(frozen=True)
@@ -28,6 +33,10 @@ class RespondentLinkPayload:
     share_results: bool
     pending_client: bool
     nonce: str
+    invite_id: Optional[int] = None
+    max_uses: int = 1
+    uses: int = 0
+    expires_at: Optional[datetime] = None
 
 
 class RespondentLinkError(Exception):
@@ -95,7 +104,59 @@ def _validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> Lis
     return assessments
 
 
-def issue_link_token(*, owner_id: int, assessments: Iterable[str], mode: str, client_slug: str | None, share_results: bool) -> str:
+def _normalise_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if timezone.is_naive(value):
+        return timezone.make_aware(value, timezone.get_current_timezone())
+    return value
+
+
+def _create_invite_record(
+    token: str,
+    payload: RespondentLinkPayload,
+    *,
+    owner_id: int,
+    client: Client | None,
+    valid_from: datetime | None = None,
+    expires_at: datetime | None = None,
+    max_uses: int | None = None,
+) -> RespondentInvite:
+    base_time = _normalise_datetime(valid_from) or timezone.now()
+    expiry = _normalise_datetime(expires_at)
+    if expiry is None:
+        expiry = base_time + timedelta(hours=RESPONDENT_LINK_DEFAULT_TTL_HOURS)
+
+    max_uses_value = max_uses if max_uses is not None else RESPONDENT_LINK_DEFAULT_MAX_USES
+    try:
+        max_uses_value = max(1, int(max_uses_value))
+    except (TypeError, ValueError):
+        max_uses_value = RESPONDENT_LINK_DEFAULT_MAX_USES
+
+    return RespondentInvite.objects.create(
+        token=token,
+        owner_id=owner_id,
+        assessments=payload.assessments,
+        mode=payload.mode,
+        client=client,
+        share_results=payload.share_results,
+        pending_client=payload.pending_client,
+        expires_at=expiry,
+        max_uses=max_uses_value,
+    )
+
+
+def issue_link_token(
+    *,
+    owner_id: int,
+    assessments: Iterable[str],
+    mode: str,
+    client_slug: str | None,
+    share_results: bool,
+    valid_from: datetime | None = None,
+    expires_at: datetime | None = None,
+    max_uses: int | None = None,
+) -> str:
     assessments = _validate_assessments(owner_id, assessments)
 
     if mode not in {"self-entry", "linked"}:
@@ -103,6 +164,7 @@ def issue_link_token(*, owner_id: int, assessments: Iterable[str], mode: str, cl
 
     pending_client = False
     resolved_client_slug: str | None = None
+    client: Client | None = None
 
     if mode == "linked":
         if not client_slug:
@@ -126,22 +188,100 @@ def issue_link_token(*, owner_id: int, assessments: Iterable[str], mode: str, cl
         nonce=secrets.token_urlsafe(8),
     )
 
-    return _serialise_payload(payload)
+    token = _serialise_payload(payload)
+    _create_invite_record(
+        token,
+        payload,
+        owner_id=owner_id,
+        client=client,
+        valid_from=valid_from,
+        expires_at=expires_at,
+        max_uses=max_uses,
+    )
+
+    return token
 
 
 def refresh_token_for_client(payload: RespondentLinkPayload, *, client_slug: str) -> str:
-    return _serialise_payload(
-        RespondentLinkPayload(
-            owner_id=payload.owner_id,
-            assessments=payload.assessments,
-            mode="linked",
-            client_slug=client_slug,
-            share_results=payload.share_results,
-            pending_client=False,
-            nonce=secrets.token_urlsafe(8),
-        )
+    client = Client.objects.filter(owner_id=payload.owner_id, slug=client_slug).first()
+    if client is None:
+        raise RespondentLinkError("Client could not be found for this clinician.")
+
+    refreshed_payload = RespondentLinkPayload(
+        owner_id=payload.owner_id,
+        assessments=payload.assessments,
+        mode="linked",
+        client_slug=client_slug,
+        share_results=payload.share_results,
+        pending_client=False,
+        nonce=secrets.token_urlsafe(8),
     )
+
+    token = _serialise_payload(refreshed_payload)
+
+    with transaction.atomic():
+        if payload.invite_id:
+            existing_invite = (
+                RespondentInvite.objects.select_for_update()
+                .filter(id=payload.invite_id)
+                .first()
+            )
+        else:
+            existing_invite = None
+
+        if existing_invite and (
+            existing_invite.client_id in {None, client.id}
+        ):
+            existing_invite.token = token
+            existing_invite.client = client
+            existing_invite.pending_client = False
+            existing_invite.uses = 0
+            existing_invite.save(update_fields=["token", "client", "pending_client", "uses"])
+            return token
+
+        _create_invite_record(token, refreshed_payload, owner_id=payload.owner_id, client=client)
+
+    return token
 
 
 def resolve_link_token(token: str) -> RespondentLinkPayload:
-    return _deserialise_payload(token)
+    payload = _deserialise_payload(token)
+
+    invite = RespondentInvite.objects.select_related("client").filter(token=token).first()
+    if invite is None:
+        raise RespondentLinkError("The respondent link is invalid or has expired. Please request a new invitation.")
+
+    if invite.owner_id != payload.owner_id:
+        raise RespondentLinkError("The respondent link is invalid or has been tampered with.")
+
+    if invite.client and invite.client.slug != payload.client_slug:
+        raise RespondentLinkError("The respondent link is no longer valid for this client.")
+
+    if invite.pending_client != payload.pending_client:
+        raise RespondentLinkError("The respondent invitation state is inconsistent. Please request a new link.")
+
+    if invite.is_expired():
+        raise RespondentLinkError("This respondent link has expired. Please request a new invitation.")
+
+    if invite.uses >= invite.max_uses:
+        raise RespondentLinkError("This respondent link has already been used.")
+
+    return replace(
+        payload,
+        invite_id=invite.id,
+        max_uses=invite.max_uses,
+        uses=invite.uses,
+        expires_at=invite.expires_at,
+    )
+
+
+def mark_invite_used(token: str) -> None:
+    with transaction.atomic():
+        invite = RespondentInvite.objects.select_for_update().filter(token=token).first()
+        if invite is None:
+            return
+        if invite.uses >= invite.max_uses:
+            return
+        invite.uses += 1
+        invite.used_at = timezone.now()
+        invite.save(update_fields=["uses", "used_at"])

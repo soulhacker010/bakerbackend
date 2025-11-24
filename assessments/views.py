@@ -37,6 +37,7 @@ from .respondent_links import (
     issue_link_token,
     refresh_token_for_client,
     resolve_link_token,
+    mark_invite_used,
 )
 
 
@@ -455,6 +456,9 @@ class RespondentLinkResolveView(APIView):
                 "mode": link_payload.mode,
                 "shareResults": link_payload.share_results,
                 "pendingClient": link_payload.pending_client,
+                "maxUses": link_payload.max_uses,
+                "uses": link_payload.uses,
+                "expiresAt": link_payload.expires_at.isoformat() if link_payload.expires_at else None,
                 "assessments": assessment_payload,
                 "client": client_data,
             }
@@ -596,6 +600,8 @@ class RespondentLinkClientView(APIView):
 
         refreshed_token = refresh_token_for_client(link_payload, client_slug=client.slug)
 
+        refreshed_payload = resolve_link_token(refreshed_token)
+
         return Response(
             {
                 "token": refreshed_token,
@@ -607,6 +613,9 @@ class RespondentLinkClientView(APIView):
                     "dob": client.dob.isoformat() if client.dob else None,
                     "gender": client.gender,
                 },
+                "maxUses": refreshed_payload.max_uses,
+                "uses": refreshed_payload.uses,
+                "expiresAt": refreshed_payload.expires_at.isoformat() if refreshed_payload.expires_at else None,
             },
             status=status.HTTP_201_CREATED,
         )
@@ -678,5 +687,8 @@ class RespondentAssessmentResponseView(APIView):
                 return Response({"detail": "Complete your details before starting the assessment."}, status=status.HTTP_403_FORBIDDEN)
 
         instance = serializer.save()
+
+        mark_invite_used(token)
+
         response_data = AssessmentResponseSerializer(instance).data
         return Response(response_data, status=status.HTTP_201_CREATED)

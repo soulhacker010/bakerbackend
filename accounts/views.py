@@ -1,11 +1,14 @@
-from datetime import timedelta, timezone as dt_timezone
+from datetime import datetime, timezone as dt_timezone
 
 from django.conf import settings
 from django.utils import timezone
 from rest_framework import generics, permissions, status
-from rest_framework.authtoken.models import Token
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .email_feedback import FeedbackEmail, FeedbackEmailError, send_feedback_email
 from .email_password_reset import PasswordResetEmail, PasswordResetEmailError, send_password_reset_email
@@ -31,21 +34,70 @@ from .two_factor import (
 from .password_reset import invalidate_password_reset_tokens, issue_password_reset_token
 
 
+def _format_timestamp(exp_timestamp: int) -> str:
+    return (
+        datetime.fromtimestamp(exp_timestamp, tz=dt_timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+
+def _issue_jwt_pair(user: User) -> dict[str, str]:
+    refresh = RefreshToken.for_user(user)
+    access_token = refresh.access_token
+    return {
+        "access": str(access_token),
+        "refresh": str(refresh),
+        "access_expires_at": _format_timestamp(int(access_token["exp"])),
+        "refresh_expires_at": _format_timestamp(int(refresh["exp"])),
+    }
+
+
+def _build_auth_payload(user: User) -> dict:
+    tokens = _issue_jwt_pair(user)
+    return {
+        "user": UserSerializer(user).data,
+        "access": tokens["access"],
+        "refresh": tokens["refresh"],
+        "accessExpiresAt": tokens["access_expires_at"],
+        "refreshExpiresAt": tokens["refresh_expires_at"],
+    }
+
+
+def _blacklist_user_tokens(user: User) -> None:
+    try:
+        from rest_framework_simplejwt.token_blacklist import models as blacklist_models
+    except ImportError:  # pragma: no cover - optional blacklist app
+        return
+
+    outstanding = blacklist_models.OutstandingToken.objects.filter(user=user)
+    for token in outstanding:
+        blacklist_models.BlacklistedToken.objects.get_or_create(token=token)
+
+
 class SignupView(generics.CreateAPIView):
     serializer_class = SignupSerializer
     permission_classes = (permissions.AllowAny,)
+
+    def initial(self, request, *args, **kwargs):  # pragma: no cover - guard clause
+        super().initial(request, *args, **kwargs)
+        if not getattr(settings, "SIGNUP_ENABLED", False):
+            raise PermissionDenied("Self-service signup is disabled.")
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
-        token, _ = Token.objects.get_or_create(user=user)
         headers = self.get_success_headers(serializer.data)
-        return Response({"user": UserSerializer(user).data, "token": token.key}, status=status.HTTP_201_CREATED, headers=headers)
+        payload = _build_auth_payload(user)
+        return Response(payload, status=status.HTTP_201_CREATED, headers=headers)
 
 
 class LoginView(APIView):
     permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-login"
 
     def post(self, request, *args, **kwargs):
         serializer = LoginSerializer(data=request.data, context={"request": request})
@@ -53,8 +105,8 @@ class LoginView(APIView):
         user = serializer.validated_data["user"]
 
         if not user.two_factor_enabled:
-            token, _ = Token.objects.get_or_create(user=user)
-            return Response({"user": UserSerializer(user).data, "token": token.key}, status=status.HTTP_200_OK)
+            payload = _build_auth_payload(user)
+            return Response(payload, status=status.HTTP_200_OK)
 
         challenge, code = create_two_factor_challenge(user)
 
@@ -177,15 +229,13 @@ class PasswordResetCompleteView(APIView):
         token.mark_used()
         invalidate_password_reset_tokens(user, exclude_id=token.pk)
 
-        # Rotate auth tokens for security and return a fresh token.
-        Token.objects.filter(user=user).delete()
-        auth_token, _ = Token.objects.get_or_create(user=user)
+        _blacklist_user_tokens(user)
+        auth_payload = _build_auth_payload(user)
 
         return Response(
             {
                 "detail": "Password updated successfully.",
-                "token": auth_token.key,
-                "user": UserSerializer(user).data,
+                **auth_payload,
             },
             status=status.HTTP_200_OK,
         )
@@ -231,6 +281,8 @@ class FeedbackSubmissionView(APIView):
 
 class TwoFactorVerifyView(APIView):
     permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-2fa"
 
     def post(self, request, *args, **kwargs):
         serializer = TwoFactorVerifySerializer(data=request.data)
@@ -252,8 +304,8 @@ class TwoFactorVerifyView(APIView):
 
         if not user.two_factor_enabled:
             challenge.delete()
-            token, _ = Token.objects.get_or_create(user=user)
-            return Response({"user": UserSerializer(user).data, "token": token.key}, status=status.HTTP_200_OK)
+            payload = _build_auth_payload(user)
+            return Response(payload, status=status.HTTP_200_OK)
 
         if challenge.attempts >= settings.TWO_FACTOR_MAX_ATTEMPTS:
             challenge.delete()
@@ -274,12 +326,14 @@ class TwoFactorVerifyView(APIView):
             )
 
         challenge.delete()
-        token, _ = Token.objects.get_or_create(user=user)
-        return Response({"user": UserSerializer(user).data, "token": token.key}, status=status.HTTP_200_OK)
+        payload = _build_auth_payload(user)
+        return Response(payload, status=status.HTTP_200_OK)
 
 
 class TwoFactorResendView(APIView):
     permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-2fa"
 
     def post(self, request, *args, **kwargs):
         serializer = TwoFactorResendSerializer(data=request.data)
@@ -338,3 +392,70 @@ class TwoFactorResendView(APIView):
             "ttlSeconds": settings.TWO_FACTOR_CODE_TTL_MINUTES * 60,
         }
         return Response(payload, status=status.HTTP_202_ACCEPTED)
+
+
+class TokenRefreshView(APIView):
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-refresh"
+
+    def post(self, request, *args, **kwargs):
+        raw_refresh = request.data.get("refresh")
+        if not raw_refresh or not isinstance(raw_refresh, str):
+            return Response({"detail": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            refresh_token = RefreshToken(raw_refresh)
+        except TokenError:
+            return Response({"detail": "Invalid refresh token."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        user_id = refresh_token.get("user_id")
+        user = User.objects.filter(id=user_id).first()
+        if not user:
+            return Response({"detail": "Refresh token is no longer valid."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        payload = _build_auth_payload(user)
+
+        try:
+            refresh_token.blacklist()
+        except TokenError:
+            pass
+        except AttributeError:  # pragma: no cover - blacklist app not installed
+            pass
+
+        return Response(payload, status=status.HTTP_200_OK)
+
+
+class LogoutView(APIView):
+    permission_classes = (permissions.IsAuthenticated,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-logout"
+
+    def post(self, request, *args, **kwargs):
+        raw_refresh = request.data.get("refresh")
+        all_sessions = bool(request.data.get("all"))
+
+        if all_sessions:
+            _blacklist_user_tokens(request.user)
+            return Response(status=status.HTTP_204_NO_CONTENT)
+
+        if not raw_refresh or not isinstance(raw_refresh, str):
+            return Response({"detail": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            refresh_token = RefreshToken(raw_refresh)
+        except TokenError:
+            return Response({"detail": "Invalid refresh token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        token_user_id = refresh_token.get("user_id")
+        if token_user_id != request.user.id:
+            return Response({"detail": "Token does not belong to the authenticated user."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            refresh_token.blacklist()
+        except TokenError:
+            pass
+        except AttributeError:  # pragma: no cover
+            pass
+
+        return Response(status=status.HTTP_204_NO_CONTENT)

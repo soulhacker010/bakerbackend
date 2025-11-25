@@ -46,6 +46,9 @@ SENTRY_ENVIRONMENT = os.environ.get(
 SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.0"))
 SENTRY_PROFILES_SAMPLE_RATE = float(os.environ.get("SENTRY_PROFILES_SAMPLE_RATE", "0.0"))
 
+TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "").strip()
+TURNSTILE_ENABLED = os.environ.get("TURNSTILE_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
 raw_allowed_hosts = os.environ.get("ALLOWED_HOSTS", "")
 ALLOWED_HOSTS = [host.strip() for host in raw_allowed_hosts.split(",") if host.strip()]
 if DEBUG and not ALLOWED_HOSTS:

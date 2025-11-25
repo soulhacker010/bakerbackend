@@ -36,13 +36,15 @@ class UserSerializer(serializers.ModelSerializer):
 
 class SignupSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
+    turnstile_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = User
-        fields = ("email", "password", "first_name", "last_name", "profession")
+        fields = ("email", "password", "first_name", "last_name", "profession", "turnstile_token")
 
     def create(self, validated_data):
         password = validated_data.pop("password")
+        validated_data.pop("turnstile_token", None)
         user = User.objects.create_user(password=password, **validated_data)
         return user
 
@@ -57,6 +59,7 @@ class ProfileSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    turnstile_token = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     def validate(self, attrs):
         email = attrs.get("email")

@@ -1,4 +1,5 @@
 from datetime import datetime, timezone as dt_timezone
+from typing import Optional
 
 from django.conf import settings
 from django.utils import timezone
@@ -32,6 +33,28 @@ from .two_factor import (
     verify_two_factor_code,
 )
 from .password_reset import invalidate_password_reset_tokens, issue_password_reset_token
+from .turnstile import (
+    TurnstileServiceError,
+    TurnstileValidationError,
+    validate_turnstile_token,
+)
+
+
+def _get_client_ip(request) -> Optional[str]:
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
+
+
+def _validate_turnstile_or_response(request, token: Optional[str]):
+    try:
+        validate_turnstile_token(token, remote_ip=_get_client_ip(request))
+    except TurnstileValidationError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except TurnstileServiceError as exc:
+        return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    return None
 
 
 def _format_timestamp(exp_timestamp: int) -> str:
@@ -88,6 +111,9 @@ class SignupView(generics.CreateAPIView):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        error_response = _validate_turnstile_or_response(request, serializer.validated_data.get("turnstile_token"))
+        if error_response is not None:
+            return error_response
         user = serializer.save()
         headers = self.get_success_headers(serializer.data)
         payload = _build_auth_payload(user)
@@ -102,6 +128,9 @@ class LoginView(APIView):
     def post(self, request, *args, **kwargs):
         serializer = LoginSerializer(data=request.data, context={"request": request})
         serializer.is_valid(raise_exception=True)
+        error_response = _validate_turnstile_or_response(request, serializer.validated_data.get("turnstile_token"))
+        if error_response is not None:
+            return error_response
         user = serializer.validated_data["user"]
 
         if not user.two_factor_enabled:

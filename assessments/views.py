@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, time, timedelta, timezone as dt_timezone
+from datetime import date, datetime, time, timedelta, timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
 from django.db.models import Q
@@ -68,14 +68,11 @@ class AssessmentViewSet(viewsets.ModelViewSet):
     lookup_field = "slug"
 
     def get_queryset(self):
-        queryset = Assessment.objects.select_related("category").prefetch_related("tags", "questions")
-        user = self.request.user
-        if user.is_staff or user.is_superuser:
-            return queryset.order_by("title")
-        return queryset.filter(status=Assessment.Status.PUBLISHED).order_by("title")
+        queryset = self._base_queryset()
+        return self._apply_visibility_rules(queryset)
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve"):
+        if self._is_readonly_action():
             return [permissions.IsAuthenticated()]
         return [permissions.IsAuthenticated(), IsAdminOrReadOnly()]
 
@@ -84,6 +81,20 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         queryset = self.get_queryset().filter(status=Assessment.Status.PUBLISHED)
         serializer = self.get_serializer(queryset, many=True)
         return Response(serializer.data)
+
+    def _base_queryset(self):
+        return Assessment.objects.select_related("category").prefetch_related("tags", "questions")
+
+    def _apply_visibility_rules(self, queryset):
+        if self._can_view_all_assessments(self.request.user):
+            return queryset.order_by("title")
+        return queryset.filter(status=Assessment.Status.PUBLISHED).order_by("title")
+
+    def _can_view_all_assessments(self, user):
+        return bool(user and (user.is_staff or user.is_superuser))
+
+    def _is_readonly_action(self):
+        return self.action in {"list", "retrieve", "published"}
 
 
 class AssessmentResponseViewSet(viewsets.ModelViewSet):
@@ -228,26 +239,92 @@ class RespondentLinkScheduleView(APIView):
     def post(self, request, *args, **kwargs):
         payload = request.data or {}
 
+        assessments = self._extract_assessments(payload)
+        if isinstance(assessments, Response):
+            return assessments
+
+        client = self._resolve_client(request.user, payload)
+        if isinstance(client, Response):
+            return client
+
+        email_config = self._extract_email_config(payload)
+        schedule_config = self._extract_schedule_config(payload)
+        if isinstance(schedule_config, Response):
+            return schedule_config
+
+        share_results = bool(payload.get("shareResults") or payload.get("share_results"))
+
+        schedule = RespondentInviteSchedule.objects.create(
+            owner=request.user,
+            client=client,
+            assessments=list(assessments),
+            subject=email_config["subject"],
+            message=email_config["message"],
+            include_consent=email_config["include_consent"],
+            share_results=share_results,
+            start_at=schedule_config["first_run"],
+            frequency=schedule_config["frequency"],
+            cycles=schedule_config["cycles"],
+        )
+
+        runs_response = self._generate_schedule_runs(
+            schedule=schedule,
+            cycles=schedule_config["cycles"],
+            first_run=schedule_config["first_run"],
+            frequency_days=schedule_config["delta_days"],
+            request_user=request.user,
+            assessments=assessments,
+            client=client,
+            share_results=share_results,
+            email_config=email_config,
+        )
+
+        if isinstance(runs_response, Response):
+            return runs_response
+
+        runs, invite_preview_url = runs_response
+
+        self._notify_schedule_created(request.user, client, assessments, schedule, runs)
+
+        return Response(
+            {
+                "scheduleId": str(schedule.reference),
+                "runs": runs,
+                "preview": {
+                    "inviteUrl": invite_preview_url,
+                    "subject": email_config["subject"],
+                    "message": email_config["message"],
+                    "includeConsent": email_config["include_consent"],
+                    "replyTo": email_config["reply_to"],
+                },
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _extract_assessments(self, payload: dict):
         assessments = payload.get("assessments")
         if not isinstance(assessments, (list, tuple)) or not assessments:
             return Response(
                 {"detail": "'assessments' must be a non-empty list of assessment slugs."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        return assessments
 
+    def _resolve_client(self, user, payload: dict):
         client_slug = payload.get("clientSlug") or payload.get("client_slug")
         if not client_slug:
             return Response({"detail": "A client slug is required to start a schedule."}, status=status.HTTP_400_BAD_REQUEST)
 
-        client = Client.objects.filter(owner=request.user, slug=client_slug).first()
+        client = Client.objects.filter(owner=user, slug=client_slug).first()
         if client is None:
             return Response({"detail": "Client could not be found for this clinician."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not client.email:
             return Response({"detail": "Client does not have an email address on file."}, status=status.HTTP_400_BAD_REQUEST)
 
-        share_results = bool(payload.get("shareResults") or payload.get("share_results"))
+        return client
 
+    def _extract_email_config(self, payload: dict) -> dict:
         email_payload = payload.get("email") or {}
         subject = str(email_payload.get("subject") or "").strip()
         message = str(email_payload.get("message") or "").strip()
@@ -258,13 +335,24 @@ class RespondentLinkScheduleView(APIView):
         include_consent = True if include_consent_value is None else bool(include_consent_value)
 
         reply_to = email_payload.get("replyTo") or email_payload.get("reply_to")
-        if reply_to:
-            reply_to = str(reply_to).strip()
+        reply_to_value = str(reply_to).strip() if reply_to else None
 
+        return {
+            "subject": subject,
+            "message": message,
+            "include_consent": include_consent,
+            "reply_to": reply_to_value,
+        }
+
+    def _extract_schedule_config(self, payload: dict):
         schedule_payload = payload.get("schedule") or {}
         start_date_value = schedule_payload.get("startDate") or schedule_payload.get("start_date")
-        frequency = schedule_payload.get("frequency") or schedule_payload.get("repeat")
-        cycles_value = schedule_payload.get("cycles") or schedule_payload.get("cycleCount") or schedule_payload.get("cycle_count")
+        frequency_value = schedule_payload.get("frequency") or schedule_payload.get("repeat")
+        cycles_value = (
+            schedule_payload.get("cycles")
+            or schedule_payload.get("cycleCount")
+            or schedule_payload.get("cycle_count")
+        )
 
         if not start_date_value:
             return Response({"detail": "A schedule start date is required."}, status=status.HTTP_400_BAD_REQUEST)
@@ -274,55 +362,64 @@ class RespondentLinkScheduleView(APIView):
         except ValueError:
             return Response({"detail": "Schedule start date must be provided in YYYY-MM-DD format."}, status=status.HTTP_400_BAD_REQUEST)
 
-        frequency = (str(frequency or "none").strip() or "none").lower()
+        frequency = (str(frequency_value or "none").strip() or "none").lower()
         if frequency not in {"none", *self._FREQUENCY_MAP.keys()}:
             return Response({"detail": "Unsupported schedule frequency."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            cycles = int(cycles_value or 1)
-        except (TypeError, ValueError):
-            cycles = 1
-
-        if cycles < 1:
-            cycles = 1
+        cycles = self._coerce_cycles(cycles_value)
         if cycles > self._MAX_CYCLES:
             return Response({"detail": "Number of cycles exceeds the supported maximum."}, status=status.HTTP_400_BAD_REQUEST)
 
         if frequency == "none":
             cycles = 1
 
-        tz = timezone.get_current_timezone()
-        first_run_dt = datetime.combine(start_date, time(hour=9, minute=0))
-        if timezone.is_naive(first_run_dt):
-            first_run_dt = timezone.make_aware(first_run_dt, tz)
-
-        now = timezone.now()
-        if first_run_dt < now:
-            first_run_dt = now + timedelta(minutes=self._MINUTES_BUFFER)
-
+        first_run = self._determine_first_run_datetime(start_date)
         delta_days = self._FREQUENCY_MAP.get(frequency, 0)
 
-        schedule = RespondentInviteSchedule.objects.create(
-            owner=request.user,
-            client=client,
-            assessments=list(assessments),
-            subject=subject,
-            message=message,
-            include_consent=include_consent,
-            share_results=share_results,
-            start_at=first_run_dt,
-            frequency=frequency,
-            cycles=cycles,
-        )
+        return {
+            "first_run": first_run,
+            "frequency": frequency,
+            "cycles": cycles,
+            "delta_days": delta_days,
+        }
 
+    def _coerce_cycles(self, value) -> int:
+        try:
+            cycles = int(value or 1)
+        except (TypeError, ValueError):
+            cycles = 1
+        return max(1, cycles)
+
+    def _determine_first_run_datetime(self, start_date: date) -> datetime:
+        tz = timezone.get_current_timezone()
+        first_run = datetime.combine(start_date, time(hour=9, minute=0))
+        if timezone.is_naive(first_run):
+            first_run = timezone.make_aware(first_run, tz)
+
+        now = timezone.now()
+        if first_run < now:
+            first_run = now + timedelta(minutes=self._MINUTES_BUFFER)
+        return first_run
+
+    def _generate_schedule_runs(
+        self,
+        *,
+        schedule: RespondentInviteSchedule,
+        cycles: int,
+        first_run: datetime,
+        frequency_days: int,
+        request_user,
+        assessments,
+        client: Client,
+        share_results: bool,
+        email_config: dict,
+    ):
         runs: list[dict[str, str]] = []
-
         try:
             for index in range(cycles):
-                scheduled_at = first_run_dt + timedelta(days=delta_days * index)
-
+                scheduled_at = first_run + timedelta(days=frequency_days * index)
                 token = issue_link_token(
-                    owner_id=request.user.id,
+                    owner_id=request_user.id,
                     assessments=assessments,
                     mode="linked",
                     client_slug=client.slug,
@@ -334,12 +431,12 @@ class RespondentLinkScheduleView(APIView):
                 try:
                     send_assessment_invite_email(
                         InviteContent(
-                            subject=subject,
-                            message=message,
-                            include_consent=include_consent,
+                            subject=email_config["subject"],
+                            message=email_config["message"],
+                            include_consent=email_config["include_consent"],
                             invite_url=invite_url,
                             client_email=client.email,
-                            reply_to=reply_to or None,
+                            reply_to=email_config["reply_to"],
                             send_at=scheduled_at,
                         )
                     )
@@ -368,11 +465,13 @@ class RespondentLinkScheduleView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         invite_preview_url = build_invite_url(runs[0]["token"]) if runs else None
+        return runs, invite_preview_url
 
+    def _notify_schedule_created(self, user, client: Client, assessments, schedule, runs: list[dict[str, str]]):
         try:
             client_name = str(client)
             create_notification(
-                recipient=request.user,
+                recipient=user,
                 event_type=Notification.EventType.SCHEDULE_SENT,
                 title="Assessment schedule created",
                 body=f"A schedule for {client_name} has been created.",
@@ -387,21 +486,6 @@ class RespondentLinkScheduleView(APIView):
         except Exception:  # pragma: no cover - notifications must not block scheduling
             logger.exception("Unable to create schedule notification")
 
-        return Response(
-            {
-                "scheduleId": str(schedule.reference),
-                "runs": runs,
-                "preview": {
-                    "inviteUrl": invite_preview_url,
-                    "subject": subject,
-                    "message": message,
-                    "includeConsent": include_consent,
-                    "replyTo": reply_to,
-                },
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
 
 class RespondentLinkResolveView(APIView):
     permission_classes = (permissions.AllowAny,)
@@ -411,17 +495,31 @@ class RespondentLinkResolveView(APIView):
         if not token:
             return Response({"detail": "A respondent token is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        link_payload = self._resolve_link_payload(token)
+        if isinstance(link_payload, Response):
+            return link_payload
+
+        assessment_payload = self._build_assessment_payload(link_payload)
+
+        client_payload = self._build_client_payload(link_payload)
+        if isinstance(client_payload, Response):
+            return client_payload
+
+        return Response(self._build_resolve_response(token, link_payload, assessment_payload, client_payload))
+
+    def _resolve_link_payload(self, token: str):
         try:
-            link_payload = resolve_link_token(token)
+            return resolve_link_token(token)
         except RespondentLinkError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        assessments = list(
-            Assessment.objects.filter(slug__in=link_payload.assessments).filter(
-                Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=link_payload.owner_id)
-            )
+    def _build_assessment_payload(self, link_payload):
+        assessments = (
+            Assessment.objects.filter(slug__in=link_payload.assessments)
+            .filter(Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=link_payload.owner_id))
+            .select_related("category")
         )
-        assessment_payload = [
+        return [
             {
                 "slug": assessment.slug,
                 "title": assessment.title,
@@ -432,37 +530,38 @@ class RespondentLinkResolveView(APIView):
             for assessment in assessments
         ]
 
-        client_data = None
-        if link_payload.client_slug:
-            client = Client.objects.filter(owner_id=link_payload.owner_id, slug=link_payload.client_slug).first()
-            if not client:
-                return Response(
-                    {"detail": "The linked client could not be found. Request a new invitation."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+    def _build_client_payload(self, link_payload):
+        if not link_payload.client_slug:
+            return None
 
-            client_data = {
-                "slug": client.slug,
-                "firstName": client.first_name,
-                "lastName": client.last_name,
-                "email": client.email,
-                "dob": client.dob.isoformat() if client.dob else None,
-                "gender": client.gender,
-            }
+        client = Client.objects.filter(owner_id=link_payload.owner_id, slug=link_payload.client_slug).first()
+        if not client:
+            return Response(
+                {"detail": "The linked client could not be found. Request a new invitation."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-        return Response(
-            {
-                "token": token,
-                "mode": link_payload.mode,
-                "shareResults": link_payload.share_results,
-                "pendingClient": link_payload.pending_client,
-                "maxUses": link_payload.max_uses,
-                "uses": link_payload.uses,
-                "expiresAt": link_payload.expires_at.isoformat() if link_payload.expires_at else None,
-                "assessments": assessment_payload,
-                "client": client_data,
-            }
-        )
+        return {
+            "slug": client.slug,
+            "firstName": client.first_name,
+            "lastName": client.last_name,
+            "email": client.email,
+            "dob": client.dob.isoformat() if client.dob else None,
+            "gender": client.gender,
+        }
+
+    def _build_resolve_response(self, token: str, link_payload, assessments: list[dict], client_payload):
+        return {
+            "token": token,
+            "mode": link_payload.mode,
+            "shareResults": link_payload.share_results,
+            "pendingClient": link_payload.pending_client,
+            "maxUses": link_payload.max_uses,
+            "uses": link_payload.uses,
+            "expiresAt": link_payload.expires_at.isoformat() if link_payload.expires_at else None,
+            "assessments": assessments,
+            "client": client_payload,
+        }
 
 
 class RespondentLinkScheduleRunListView(APIView):
@@ -471,6 +570,20 @@ class RespondentLinkScheduleRunListView(APIView):
     _SUPPORTED_FILTERS = {"sent", "future", "scheduled", "pending", "all", ""}
 
     def get(self, request, *args, **kwargs):
+        client = self._resolve_client(request)
+        if isinstance(client, Response):
+            return client
+
+        status_filter = self._normalize_status_filter(request)
+        if isinstance(status_filter, Response):
+            return status_filter
+
+        runs = self._fetch_runs_queryset(request.user, client)
+        runs = self._apply_status_filter(runs, status_filter)
+        serializer = RespondentInviteScheduleRunSerializer(runs, many=True)
+        return Response({"runs": serializer.data})
+
+    def _resolve_client(self, request):
         client_slug = request.query_params.get("client")
         if not client_slug:
             return Response({"detail": "A client slug is required to view schedule runs."}, status=status.HTTP_400_BAD_REQUEST)
@@ -478,29 +591,30 @@ class RespondentLinkScheduleRunListView(APIView):
         client = Client.objects.filter(owner=request.user, slug=client_slug).first()
         if client is None:
             return Response({"detail": "Client could not be found for this clinician."}, status=status.HTTP_400_BAD_REQUEST)
+        return client
 
+    def _normalize_status_filter(self, request):
         status_filter = (request.query_params.get("status") or "").strip().lower()
         if status_filter not in self._SUPPORTED_FILTERS:
             return Response({"detail": "Unsupported status filter."}, status=status.HTTP_400_BAD_REQUEST)
+        return status_filter
 
-        runs = RespondentInviteScheduleRun.objects.select_related("schedule", "schedule__client").filter(
-            schedule__owner=request.user,
+    def _fetch_runs_queryset(self, user, client):
+        return RespondentInviteScheduleRun.objects.select_related("schedule", "schedule__client").filter(
+            schedule__owner=user,
             schedule__client=client,
-        )
+        ).order_by("-scheduled_at")
 
+    def _apply_status_filter(self, runs_queryset, status_filter: str):
         now = timezone.now()
 
         if status_filter in {"future", "pending"}:
-            runs = runs.filter(status="scheduled", scheduled_at__gte=now)
-        elif status_filter == "sent":
-            runs = runs.filter(Q(status="sent") | Q(scheduled_at__lt=now))
-        elif status_filter == "scheduled":
-            runs = runs.filter(status="scheduled")
-
-        runs = runs.order_by("-scheduled_at")
-
-        serializer = RespondentInviteScheduleRunSerializer(runs, many=True)
-        return Response({"runs": serializer.data})
+            return runs_queryset.filter(status="scheduled", scheduled_at__gte=now)
+        if status_filter == "sent":
+            return runs_queryset.filter(Q(status="sent") | Q(scheduled_at__lt=now))
+        if status_filter == "scheduled":
+            return runs_queryset.filter(status="scheduled")
+        return runs_queryset
 
 
 class RespondentLinkScheduleDetailView(APIView):
@@ -527,98 +641,133 @@ class RespondentLinkClientView(APIView):
         if not isinstance(client_payload, dict):
             return Response({"detail": "'client' must be an object."}, status=status.HTTP_400_BAD_REQUEST)
 
-        try:
-            link_payload = resolve_link_token(token)
-        except RespondentLinkError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        link_payload = self._resolve_link_payload(token)
+        if isinstance(link_payload, Response):
+            return link_payload
 
         if not link_payload.pending_client:
             return Response({"detail": "This respondent invitation is already linked to a client."}, status=status.HTTP_400_BAD_REQUEST)
 
-        owner = get_user_model().objects.filter(pk=link_payload.owner_id, is_active=True).first()
+        owner = self._resolve_owner(link_payload.owner_id)
+        if isinstance(owner, Response):
+            return owner
+
+        client_details = self._normalize_client_details(client_payload)
+        if isinstance(client_details, Response):
+            return client_details
+
+        client = self._upsert_client(owner, client_details)
+        update_client_group_cache(client)
+
+        refreshed_token, refreshed_payload = self._refresh_link_token(link_payload, client)
+
+        return Response(
+            self._build_client_response(refreshed_token, client, refreshed_payload),
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _resolve_link_payload(self, token: str):
+        try:
+            return resolve_link_token(token)
+        except RespondentLinkError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _resolve_owner(self, owner_id: int):
+        owner = get_user_model().objects.filter(pk=owner_id, is_active=True).first()
         if owner is None:
             return Response({"detail": "The clinician account for this invitation is unavailable."}, status=status.HTTP_400_BAD_REQUEST)
+        return owner
 
-        first_name = (client_payload.get("firstName") or "").strip()
-        last_name = (client_payload.get("lastName") or "").strip()
-        email = (client_payload.get("email") or "").strip().lower()
-        gender = client_payload.get("gender") or ""
+    def _normalize_client_details(self, payload: dict):
+        first_name = (payload.get("firstName") or "").strip()
+        last_name = (payload.get("lastName") or "").strip()
+        email = (payload.get("email") or "").strip().lower()
+        gender = payload.get("gender") or ""
         if gender and gender not in {choice[0] for choice in Client.Gender.choices}:
             gender = ""
 
-        dob_value = client_payload.get("dob") or ""
-        dob = None
-        if dob_value:
-            try:
-                dob = datetime.strptime(dob_value, "%Y-%m-%d").date()
-            except ValueError:
-                return Response({"detail": "Date of birth must be provided in YYYY-MM-DD format."}, status=status.HTTP_400_BAD_REQUEST)
+        dob = self._parse_date_of_birth(payload.get("dob") or "")
+        if isinstance(dob, Response):
+            return dob
 
-        informant1_name = (client_payload.get("informant1Name") or "").strip()
-        informant1_email = (client_payload.get("informant1Email") or "").strip()
-        informant2_name = (client_payload.get("informant2Name") or "").strip()
-        informant2_email = (client_payload.get("informant2Email") or "").strip()
+        details = {
+            "first_name": first_name,
+            "last_name": last_name,
+            "email": email,
+            "gender": gender,
+            "dob": dob,
+            "informant1_name": (payload.get("informant1Name") or "").strip(),
+            "informant1_email": (payload.get("informant1Email") or "").strip(),
+            "informant2_name": (payload.get("informant2Name") or "").strip(),
+            "informant2_email": (payload.get("informant2Email") or "").strip(),
+        }
+        details["base_name"] = f"{first_name} {last_name}".strip() or email or "client"
+        return details
 
-        base_name = f"{first_name} {last_name}".strip() or email or "client"
+    def _parse_date_of_birth(self, value: str):
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return Response({"detail": "Date of birth must be provided in YYYY-MM-DD format."}, status=status.HTTP_400_BAD_REQUEST)
 
+    def _upsert_client(self, owner, details: dict):
         existing = None
-        if email:
-            existing = Client.objects.filter(owner=owner, email=email).first()
+        if details["email"]:
+            existing = Client.objects.filter(owner=owner, email=details["email"]).first()
 
         if existing:
-            client = existing
             updates = {
-                "first_name": first_name or client.first_name,
-                "last_name": last_name or client.last_name,
-                "gender": gender or client.gender,
-                "dob": dob or client.dob,
-                "informant1_name": informant1_name or client.informant1_name,
-                "informant1_email": informant1_email or client.informant1_email,
-                "informant2_name": informant2_name or client.informant2_name,
-                "informant2_email": informant2_email or client.informant2_email,
+                "first_name": details["first_name"] or existing.first_name,
+                "last_name": details["last_name"] or existing.last_name,
+                "gender": details["gender"] or existing.gender,
+                "dob": details["dob"] or existing.dob,
+                "informant1_name": details["informant1_name"] or existing.informant1_name,
+                "informant1_email": details["informant1_email"] or existing.informant1_email,
+                "informant2_name": details["informant2_name"] or existing.informant2_name,
+                "informant2_email": details["informant2_email"] or existing.informant2_email,
             }
             for field, value in updates.items():
-                setattr(client, field, value)
-            client.save()
-        else:
-            slug = generate_unique_client_slug(owner.id, base_name)
-            client = Client.objects.create(
-                owner=owner,
-                slug=slug,
-                first_name=first_name or base_name,
-                last_name=last_name,
-                email=email,
-                dob=dob,
-                gender=gender,
-                informant1_name=informant1_name,
-                informant1_email=informant1_email,
-                informant2_name=informant2_name,
-                informant2_email=informant2_email,
-            )
+                setattr(existing, field, value)
+            existing.save()
+            return existing
 
-        update_client_group_cache(client)
-
-        refreshed_token = refresh_token_for_client(link_payload, client_slug=client.slug)
-
-        refreshed_payload = resolve_link_token(refreshed_token)
-
-        return Response(
-            {
-                "token": refreshed_token,
-                "client": {
-                    "slug": client.slug,
-                    "firstName": client.first_name,
-                    "lastName": client.last_name,
-                    "email": client.email,
-                    "dob": client.dob.isoformat() if client.dob else None,
-                    "gender": client.gender,
-                },
-                "maxUses": refreshed_payload.max_uses,
-                "uses": refreshed_payload.uses,
-                "expiresAt": refreshed_payload.expires_at.isoformat() if refreshed_payload.expires_at else None,
-            },
-            status=status.HTTP_201_CREATED,
+        slug = generate_unique_client_slug(owner.id, details["base_name"])
+        return Client.objects.create(
+            owner=owner,
+            slug=slug,
+            first_name=details["first_name"] or details["base_name"],
+            last_name=details["last_name"],
+            email=details["email"],
+            dob=details["dob"],
+            gender=details["gender"],
+            informant1_name=details["informant1_name"],
+            informant1_email=details["informant1_email"],
+            informant2_name=details["informant2_name"],
+            informant2_email=details["informant2_email"],
         )
+
+    def _refresh_link_token(self, link_payload, client: Client):
+        refreshed_token = refresh_token_for_client(link_payload, client_slug=client.slug)
+        refreshed_payload = resolve_link_token(refreshed_token)
+        return refreshed_token, refreshed_payload
+
+    def _build_client_response(self, token: str, client: Client, link_payload):
+        return {
+            "token": token,
+            "client": {
+                "slug": client.slug,
+                "firstName": client.first_name,
+                "lastName": client.last_name,
+                "email": client.email,
+                "dob": client.dob.isoformat() if client.dob else None,
+                "gender": client.gender,
+            },
+            "maxUses": link_payload.max_uses,
+            "uses": link_payload.uses,
+            "expiresAt": link_payload.expires_at.isoformat() if link_payload.expires_at else None,
+        }
 
 
 class RespondentAssessmentDetailView(APIView):

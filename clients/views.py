@@ -80,29 +80,10 @@ class ClientViewSet(viewsets.ModelViewSet):
         return Response({"summary": summary, "results": results}, status=status.HTTP_200_OK)
 
     def _normalize_import_data(self, data: dict) -> dict:
-        first_name = (data.get("first_name") or "").strip()
-        last_name = (data.get("last_name") or "").strip()
-        if not first_name and last_name:
-            first_name = last_name
-
+        first_name, last_name = self._resolve_names(data)
         email = (data.get("email") or "").strip().lower()
-        gender_raw = (data.get("gender") or "").strip().lower()
-        gender_map = {
-            "diverse": Client.Gender.DIVERSE,
-            "gender_diverse": Client.Gender.DIVERSE,
-            "gender diverse": Client.Gender.DIVERSE,
-            "non_binary": Client.Gender.DIVERSE,
-            "non-binary": Client.Gender.DIVERSE,
-            "non binary": Client.Gender.DIVERSE,
-        }
-        gender = ""
-        if gender_raw in {choice[0] for choice in Client.Gender.choices}:
-            gender = gender_raw
-        elif gender_raw in gender_map:
-            gender = gender_map[gender_raw]
-
-        slug_value = (data.get("slug") or "").strip()
-        normalized_slug = slugify(slug_value) if slug_value else ""
+        gender = self._normalize_gender(data.get("gender"))
+        normalized_slug = self._normalize_slug(data.get("slug"))
 
         return {
             "first_name": first_name,
@@ -117,31 +98,67 @@ class ClientViewSet(viewsets.ModelViewSet):
             "slug": normalized_slug,
         }
 
+    def _resolve_names(self, data: dict) -> tuple[str, str]:
+        first_name = (data.get("first_name") or "").strip()
+        last_name = (data.get("last_name") or "").strip()
+        if not first_name and last_name:
+            first_name = last_name
+        return first_name, last_name
+
+    def _normalize_gender(self, raw_value: str | None) -> str:
+        if not raw_value:
+            return ""
+        gender_raw = raw_value.strip().lower()
+        gender_map = {
+            "diverse": Client.Gender.DIVERSE,
+            "gender_diverse": Client.Gender.DIVERSE,
+            "gender diverse": Client.Gender.DIVERSE,
+            "non_binary": Client.Gender.DIVERSE,
+            "non-binary": Client.Gender.DIVERSE,
+            "non binary": Client.Gender.DIVERSE,
+        }
+        valid_choices = {choice[0] for choice in Client.Gender.choices}
+        if gender_raw in valid_choices:
+            return gender_raw
+        return gender_map.get(gender_raw, "")
+
+    def _normalize_slug(self, slug_value: str | None) -> str:
+        cleaned = (slug_value or "").strip()
+        return slugify(cleaned) if cleaned else ""
+
     def _upsert_client(self, owner, data: dict) -> tuple[Client, str]:
         slug = data.get("slug") or ""
-        client = None
-
-        if slug:
-            client = Client.objects.filter(owner=owner, slug=slug).first()
-
-        if client is None and data.get("email"):
-            client = Client.objects.filter(owner=owner, email=data["email"]).first()
-
+        client = self._find_existing_client(owner, slug, data.get("email"))
         payload = {key: value for key, value in data.items() if key != "slug"}
 
         if client:
-            fields_to_update: list[str] = []
-            for field, value in payload.items():
-                if getattr(client, field) != value:
-                    setattr(client, field, value)
-                    fields_to_update.append(field)
-
-            if fields_to_update:
-                client.save(update_fields=fields_to_update + ["updated_at"])
-            update_client_group_cache(client)
+            self._update_existing_client(client, payload)
             return client, "updated"
 
-        base_name = f"{payload.get('first_name', '')} {payload.get('last_name', '')}".strip() or data.get("email")
+        return self._create_client(owner, slug, payload, data.get("email"))
+
+    def _find_existing_client(self, owner, slug: str, email: str | None):
+        if slug:
+            client = Client.objects.filter(owner=owner, slug=slug).first()
+            if client:
+                return client
+        if email:
+            return Client.objects.filter(owner=owner, email=email).first()
+        return None
+
+    def _update_existing_client(self, client: Client, payload: dict) -> None:
+        fields_to_update: list[str] = []
+        for field, value in payload.items():
+            if getattr(client, field) != value:
+                setattr(client, field, value)
+                fields_to_update.append(field)
+
+        if fields_to_update:
+            client.save(update_fields=fields_to_update + ["updated_at"])
+        update_client_group_cache(client)
+
+    def _create_client(self, owner, slug: str, payload: dict, fallback_name: str | None) -> tuple[Client, str]:
+        base_name = f"{payload.get('first_name', '')} {payload.get('last_name', '')}".strip() or fallback_name
         slug_candidate = slug or generate_unique_client_slug(owner.pk, base_name)
         if Client.objects.filter(owner=owner, slug=slug_candidate).exists():
             slug_candidate = generate_unique_client_slug(owner.pk, slug_candidate)

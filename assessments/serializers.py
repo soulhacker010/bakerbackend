@@ -259,75 +259,113 @@ class AssessmentSerializer(serializers.ModelSerializer):
         used_identifiers: set[str] = set(existing_by_identifier.keys())
         seen_ids: set[int] = set()
 
-        def ensure_identifier(
-            *, candidate: Optional[str], text: Optional[str], fallback: str, current_identifier: Optional[str]
-        ) -> str:
-            base = candidate or slugify(text or fallback) or fallback
-            base = slugify(base) or fallback
-            resolved = base
-            counter = 1
-            while resolved in used_identifiers and resolved != current_identifier:
-                counter += 1
-                resolved = f"{base}-{counter}"
-            used_identifiers.add(resolved)
-            return resolved
-
         for index, payload in enumerate(questions_data):
             question_id = payload.get("id")
             existing_question = existing_by_id.get(question_id) if question_id else None
-            identifier = ensure_identifier(
+
+            identifier = self._ensure_unique_identifier(
                 candidate=payload.get("identifier"),
                 text=payload.get("text"),
                 fallback=f"question-{index + 1}",
                 current_identifier=getattr(existing_question, "identifier", None),
+                used_identifiers=used_identifiers,
             )
 
             if not existing_question and identifier in existing_by_identifier:
                 existing_question = existing_by_identifier[identifier]
-                question_id = existing_question.id
 
             config_payload = payload.get("config") or {}
             if not isinstance(config_payload, dict):
                 config_payload = {}
 
-            domain_value = payload.get("domain")
-            if domain_value is None and isinstance(config_payload, dict):
-                domain_value = config_payload.get("domain")
-            if domain_value is None and existing_question and hasattr(existing_question, "domain"):
-                domain_value = getattr(existing_question, "domain")
+            domain_value = self._resolve_question_domain(payload, config_payload, existing_question)
+            defaults = self._build_question_defaults(payload, identifier, domain_value, config_payload, index)
 
-            if domain_value is None:
-                domain_value = "general"
+            question = self._persist_question(
+                assessment=assessment,
+                existing_question=existing_question,
+                defaults=defaults,
+                existing_by_identifier=existing_by_identifier,
+            )
 
-            defaults = {
-                "identifier": identifier,
-                "order": payload.get("order", index + 1),
-                "text": payload.get("text", ""),
-                "help_text": payload.get("help_text", ""),
-                "response_type": payload.get(
-                    "response_type",
-                    AssessmentQuestion.ResponseType.FREE_TEXT,
-                ),
-                "required": payload.get("required", True),
-                "config": config_payload,
-            }
-
-            if hasattr(AssessmentQuestion, "domain"):
-                defaults["domain"] = domain_value
-
-            if existing_question:
-                question = existing_question
-                for field, value in defaults.items():
-                    setattr(question, field, value)
-                question.save()
-                seen_ids.add(question_id)
-            else:
-                question = AssessmentQuestion.objects.create(assessment=assessment, **defaults)
-                existing_by_identifier[question.identifier] = question
-                seen_ids.add(question.id)
+            seen_ids.add(question.id)
 
         # Delete removed questions
         assessment.questions.exclude(id__in=seen_ids).delete()
+
+    def _ensure_unique_identifier(
+        self,
+        *,
+        candidate: Optional[str],
+        text: Optional[str],
+        fallback: str,
+        current_identifier: Optional[str],
+        used_identifiers: set[str],
+    ) -> str:
+        base = candidate or slugify(text or fallback) or fallback
+        base = slugify(base) or fallback
+        resolved = base
+        counter = 1
+        while resolved in used_identifiers and resolved != current_identifier:
+            counter += 1
+            resolved = f"{base}-{counter}"
+        used_identifiers.add(resolved)
+        return resolved
+
+    def _resolve_question_domain(
+        self,
+        payload: dict,
+        config_payload: dict,
+        existing_question: Optional[AssessmentQuestion],
+    ) -> str:
+        domain_value = payload.get("domain")
+        if domain_value is None:
+            domain_value = config_payload.get("domain")
+        if domain_value is None and existing_question and hasattr(existing_question, "domain"):
+            domain_value = getattr(existing_question, "domain")
+        return domain_value or "general"
+
+    def _build_question_defaults(
+        self,
+        payload: dict,
+        identifier: str,
+        domain_value: str,
+        config_payload: dict,
+        index: int,
+    ) -> dict:
+        defaults = {
+            "identifier": identifier,
+            "order": payload.get("order", index + 1),
+            "text": payload.get("text", ""),
+            "help_text": payload.get("help_text", ""),
+            "response_type": payload.get(
+                "response_type",
+                AssessmentQuestion.ResponseType.FREE_TEXT,
+            ),
+            "required": payload.get("required", True),
+            "config": config_payload,
+        }
+        if hasattr(AssessmentQuestion, "domain"):
+            defaults["domain"] = domain_value
+        return defaults
+
+    def _persist_question(
+        self,
+        *,
+        assessment: Assessment,
+        existing_question: Optional[AssessmentQuestion],
+        defaults: dict,
+        existing_by_identifier: dict[str, AssessmentQuestion],
+    ) -> AssessmentQuestion:
+        if existing_question:
+            for field, value in defaults.items():
+                setattr(existing_question, field, value)
+            existing_question.save()
+            return existing_question
+
+        question = AssessmentQuestion.objects.create(assessment=assessment, **defaults)
+        existing_by_identifier[question.identifier] = question
+        return question
 
     def _sync_scoring(self, assessment: Assessment, scoring_data: Optional[dict]) -> None:
         if scoring_data is None:
@@ -601,42 +639,9 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
         configuration: Dict[str, Any],
         responses: Dict[str, Any],
     ) -> tuple[Dict[str, Any], List[str]]:
-        def accumulate(value: Any) -> float:
-            if isinstance(value, (int, float)):
-                return float(value)
-            if isinstance(value, str):
-                try:
-                    return float(value)
-                except ValueError:
-                    match = re.search(r"-?\d+(?:\.\d+)?", value)
-                    return float(match.group()) if match else 0.0
-            if isinstance(value, (list, tuple)):
-                return sum(accumulate(item) for item in value)
-            return 0.0
+        total = sum(self._accumulate_numeric(value) for value in responses.values())
 
-        total = sum(accumulate(value) for value in responses.values())
-
-        band_id: str | None = None
-        band_label: str | None = None
-        band_description: str | None = None
-
-        bands = configuration.get("bands") if isinstance(configuration, dict) else None
-        if isinstance(bands, list):
-            for band in bands:
-                if not isinstance(band, dict):
-                    continue
-                lower = band.get("min")
-                upper = band.get("max")
-                if lower is None or upper is None:
-                    continue
-                try:
-                    if float(lower) <= total <= float(upper):
-                        band_id = band.get("id") or band.get("label")
-                        band_label = band.get("label")
-                        band_description = band.get("description")
-                        break
-                except (TypeError, ValueError):
-                    continue
+        band_id, band_label, band_description = self._select_score_band(total, configuration)
 
         score_payload: Dict[str, Any] = {"total": round(total, 2)}
         if band_id:
@@ -648,3 +653,43 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
 
         highlights = [band_description] if band_description else []
         return score_payload, highlights
+
+    def _accumulate_numeric(self, value: Any) -> float:
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, str):
+            try:
+                return float(value)
+            except ValueError:
+                match = re.search(r"-?\d+(?:\.\d+)?", value)
+                return float(match.group()) if match else 0.0
+        if isinstance(value, (list, tuple)):
+            return sum(self._accumulate_numeric(item) for item in value)
+        return 0.0
+
+    def _select_score_band(
+        self,
+        total: float,
+        configuration: Dict[str, Any],
+    ) -> tuple[str | None, str | None, str | None]:
+        bands = configuration.get("bands") if isinstance(configuration, dict) else None
+        if not isinstance(bands, list):
+            return None, None, None
+
+        for band in bands:
+            if not isinstance(band, dict):
+                continue
+            lower = band.get("min")
+            upper = band.get("max")
+            if lower is None or upper is None:
+                continue
+            try:
+                if float(lower) <= total <= float(upper):
+                    band_id = band.get("id") or band.get("label")
+                    band_label = band.get("label")
+                    band_description = band.get("description")
+                    return band_id, band_label, band_description
+            except (TypeError, ValueError):
+                continue
+
+        return None, None, None

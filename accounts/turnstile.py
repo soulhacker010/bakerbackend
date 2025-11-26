@@ -56,7 +56,7 @@ def validate_turnstile_token(response_token: str | None, remote_ip: str | None =
 
     error_codes: list[str] = data.get("error-codes") or []
     if any(code in MISCONFIGURATION_CODES for code in error_codes):
-        logger.error("Turnstile secret rejected: codes=%s", error_codes)
+        logger.error("Turnstile secret rejected due to configuration error.")
         raise TurnstileServiceError("Turnstile verification is temporarily unavailable. Please try again later.")
 
     if "timeout-or-duplicate" in error_codes:

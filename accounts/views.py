@@ -32,6 +32,9 @@ from .two_factor import (
     regenerate_two_factor_challenge,
     verify_two_factor_code,
 )
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+
 from .password_reset import invalidate_password_reset_tokens, issue_password_reset_token
 from .turnstile import (
     TurnstileServiceError,
@@ -251,6 +254,11 @@ class PasswordResetCompleteView(APIView):
         token: PasswordResetToken = serializer.validated_data["token_obj"]
         user = serializer.validated_data["user"]
         password = serializer.validated_data["password"]
+
+        try:
+            validate_password(password, user=user)
+        except ValidationError as exc:
+            return Response({"detail": exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
         user.set_password(password)
         user.save(update_fields=["password"])

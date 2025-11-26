@@ -4,6 +4,7 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.utils.crypto import get_random_string
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -20,7 +21,7 @@ class RespondentLinkScheduleViewTests(APITestCase):
         super().setUp()
         self.user = get_user_model().objects.create_user(
             email="clinician@example.com",
-            password="test-pass-123",
+            password=get_random_string(length=32),
             first_name="Taylor",
         )
         self.client.force_authenticate(self.user)

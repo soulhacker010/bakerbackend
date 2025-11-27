@@ -2,6 +2,8 @@ import uuid
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
 
@@ -14,6 +16,10 @@ class UserManager(BaseUserManager):
             raise ValueError("Password must be provided")
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
+        try:
+            validate_password(password, user)
+        except ValidationError as exc:
+            raise ValueError("Password does not meet security requirements.") from exc
         user.set_password(password)
         user.save(using=self._db)
         return user

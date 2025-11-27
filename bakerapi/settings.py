@@ -54,6 +54,15 @@ ALLOWED_HOSTS = [host.strip() for host in raw_allowed_hosts.split(",") if host.s
 if DEBUG and not ALLOWED_HOSTS:
     ALLOWED_HOSTS = ["127.0.0.1", "localhost"]
 
+_admin_slug = os.environ.get("DJANGO_ADMIN_URL", "admin").strip().strip("/") or "admin"
+ADMIN_URL = f"{_admin_slug}/"
+ADMIN_ALLOWED_IPS = tuple(
+    ip.strip()
+    for ip in os.environ.get("ADMIN_ALLOWED_IPS", "").split(",")
+    if ip.strip()
+)
+ADMIN_ACCESS_TOKEN = os.environ.get("ADMIN_ACCESS_TOKEN", "").strip()
+
 
 if SENTRY_DSN and sentry_sdk is not None and DjangoIntegration is not None:  # pragma: no cover - external service
     sentry_sdk.init(
@@ -90,6 +99,7 @@ MIDDLEWARE = [
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
+    'bakerapi.middleware.AdminAccessMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',

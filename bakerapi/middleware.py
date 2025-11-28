@@ -62,10 +62,10 @@ class AdminAccessMiddleware:
             except ValueError:
                 allowed_by_ip = False
 
-        if not token:
-            allowed_by_token = True
-        else:
-            provided = request.META.get("HTTP_X_ADMIN_TOKEN", "").strip()
-            allowed_by_token = token == provided
+        provided = request.META.get("HTTP_X_ADMIN_TOKEN", "").strip()
+        token_matches = bool(token) and provided == token
 
-        return allowed_by_ip and allowed_by_token
+        if token:
+            return allowed_by_ip or token_matches
+
+        return allowed_by_ip

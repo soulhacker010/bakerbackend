@@ -3,7 +3,7 @@ from __future__ import annotations
 from ipaddress import ip_address, ip_network
 
 from django.conf import settings
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseNotFound
 
 
 def _normalise_ip_list(raw_items: tuple[str, ...]) -> tuple[ip_network, ...]:
@@ -42,7 +42,7 @@ class AdminAccessMiddleware:
     def __call__(self, request):
         if request.path.startswith(self._admin_prefix):
             if not self._is_allowed(request):
-                return HttpResponseForbidden("Access to the admin is restricted.")
+                return HttpResponseNotFound()
         return self.get_response(request)
 
     def _is_allowed(self, request) -> bool:

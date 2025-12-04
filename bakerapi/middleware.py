@@ -31,6 +31,25 @@ def _client_ip(request) -> str | None:
     return None
 
 
+def _is_ip_allowed(ip_value: str | None, networks: tuple[ip_network, ...]) -> bool:
+    if not networks:
+        return True
+    if not ip_value:
+        return False
+    try:
+        addr = ip_address(ip_value)
+    except ValueError:
+        return False
+    return any(addr in network for network in networks)
+
+
+def _token_matches(request, token: str) -> bool:
+    if not token:
+        return False
+    provided = request.META.get("HTTP_X_ADMIN_TOKEN", "").strip()
+    return provided == token
+
+
 class AdminAccessMiddleware:
     """Restrict access to the Django admin using IP allowlists and optional header tokens."""
 
@@ -53,19 +72,5 @@ class AdminAccessMiddleware:
         allowed_networks = _normalise_ip_list(tuple(raw_allowed))
         token = getattr(settings, "ADMIN_ACCESS_TOKEN", "")
 
-        ip_value = _client_ip(request)
-        allowed_by_ip = not allowed_networks
-        if ip_value and allowed_networks:
-            try:
-                addr = ip_address(ip_value)
-                allowed_by_ip = any(addr in network for network in allowed_networks)
-            except ValueError:
-                allowed_by_ip = False
-
-        provided = request.META.get("HTTP_X_ADMIN_TOKEN", "").strip()
-        token_matches = bool(token) and provided == token
-
-        if token:
-            return allowed_by_ip or token_matches
-
-        return allowed_by_ip
+        allowed_by_ip = _is_ip_allowed(_client_ip(request), allowed_networks)
+        return allowed_by_ip or _token_matches(request, token)

@@ -252,9 +252,9 @@ class RespondentInviteScheduleRun(models.Model):
     def __str__(self) -> str:  # pragma: no cover - debug helper
         return f"Run for schedule {self.schedule_id} at {self.scheduled_at.isoformat()}"
 
-
+ 
 class RespondentInvite(models.Model):
-    token = models.CharField(max_length=255, unique=True)
+    token = models.CharField(max_length=512, unique=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="respondent_invites",

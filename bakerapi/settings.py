@@ -72,6 +72,7 @@ if SENTRY_DSN and sentry_sdk is not None and DjangoIntegration is not None:  # p
         profiles_sample_rate=SENTRY_PROFILES_SAMPLE_RATE,
         environment=SENTRY_ENVIRONMENT,
         send_default_pii=False,
+        with_locals=False,
     )
 
 

@@ -235,7 +235,7 @@ class RespondentInviteSchedule(models.Model):
 
 class RespondentInviteScheduleRun(models.Model):
     schedule = models.ForeignKey(RespondentInviteSchedule, related_name="runs", on_delete=models.CASCADE)
-    token = models.CharField(max_length=255)
+    token = models.TextField()
     scheduled_at = models.DateTimeField()
     sent_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=32, default="scheduled")
@@ -254,7 +254,7 @@ class RespondentInviteScheduleRun(models.Model):
 
  
 class RespondentInvite(models.Model):
-    token = models.CharField(max_length=512, unique=True)
+    token = models.TextField(unique=True)
     owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         related_name="respondent_invites",

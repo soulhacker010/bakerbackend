@@ -159,6 +159,9 @@ def issue_link_token(
 ) -> str:
     assessments = _validate_assessments(owner_id, assessments)
 
+    if max_uses is None:
+        max_uses = len(assessments)
+
     if mode not in {"self-entry", "linked"}:
         raise RespondentLinkError("Unsupported respondent mode.")
 

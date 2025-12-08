@@ -20,7 +20,19 @@ from rest_framework import status
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
 from .cache import get_cached, set_cached
-from .checks import check_database, check_resend, check_turnstile
+from .checks import (
+    check_database,
+    check_resend,
+    check_turnstile,
+    check_auth,
+    check_clients,
+    check_client_groups,
+    check_assessments,
+    check_assessment_responses,
+    check_respondent_links,
+    check_scheduled_assessments,
+    check_notifications,
+)
 
 
 CACHE_KEY = "health_full_result"
@@ -130,21 +142,45 @@ class HealthFullView(APIView):
 
         # Run checks in parallel with timeout
         start = time.perf_counter()
-        results = {}
+        infrastructure_results = {}
+        feature_results = {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as executor:
+            # Infrastructure checks
+            infra_futures = {
                 executor.submit(check_database): "database",
                 executor.submit(check_resend): "email",
                 executor.submit(check_turnstile): "turnstile",
             }
+            # Feature checks
+            feature_futures = {
+                executor.submit(check_auth): "authentication",
+                executor.submit(check_clients): "clients",
+                executor.submit(check_client_groups): "clientGroups",
+                executor.submit(check_assessments): "assessments",
+                executor.submit(check_assessment_responses): "assessmentResponses",
+                executor.submit(check_respondent_links): "respondentLinks",
+                executor.submit(check_scheduled_assessments): "scheduledAssessments",
+                executor.submit(check_notifications): "notifications",
+            }
 
-            for future in concurrent.futures.as_completed(futures, timeout=10):
-                service_name = futures[future]
+            for future in concurrent.futures.as_completed(infra_futures, timeout=10):
+                service_name = infra_futures[future]
                 try:
-                    results[service_name] = future.result()
+                    infrastructure_results[service_name] = future.result()
                 except Exception as exc:
-                    results[service_name] = {
+                    infrastructure_results[service_name] = {
+                        "status": "down",
+                        "latencyMs": 0,
+                        "message": str(exc)[:200],
+                    }
+
+            for future in concurrent.futures.as_completed(feature_futures, timeout=10):
+                service_name = feature_futures[future]
+                try:
+                    feature_results[service_name] = future.result()
+                except Exception as exc:
+                    feature_results[service_name] = {
                         "status": "down",
                         "latencyMs": 0,
                         "message": str(exc)[:200],
@@ -152,8 +188,9 @@ class HealthFullView(APIView):
 
         total_latency = (time.perf_counter() - start) * 1000
 
-        # Determine overall status
-        statuses = [r.get("status", "down") for r in results.values()]
+        # Determine overall status from both infrastructure and features
+        all_results = {**infrastructure_results, **feature_results}
+        statuses = [r.get("status", "down") for r in all_results.values()]
         if all(s == "ok" for s in statuses):
             overall = "ok"
         elif any(s == "down" for s in statuses):
@@ -163,7 +200,8 @@ class HealthFullView(APIView):
 
         response_data = {
             "status": overall,
-            "services": results,
+            "infrastructure": infrastructure_results,
+            "features": feature_results,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "responseTimeMs": round(total_latency, 2),
         }

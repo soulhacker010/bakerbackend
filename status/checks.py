@@ -44,7 +44,7 @@ def check_database() -> CheckResult:
 def check_resend() -> CheckResult:
     """
     Check Resend email API availability.
-    We hit their /emails endpoint with a HEAD-like GET to /domains (lightweight).
+    We use the /api-keys endpoint which works with any valid API key.
     If no API key configured, return degraded.
     """
     api_key = getattr(settings, "RESEND_API_KEY", "") or ""
@@ -53,21 +53,21 @@ def check_resend() -> CheckResult:
 
     start = time.perf_counter()
     try:
-        # Use the /domains endpoint as a lightweight check (list domains)
+        # Use /api-keys endpoint - works with any valid API key
         response = httpx.get(
-            "https://api.resend.com/domains",
+            "https://api.resend.com/api-keys",
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=5.0,
         )
         latency = (time.perf_counter() - start) * 1000
-        if response.status_code in (200, 401, 403):
-            # 401/403 means API is reachable but key might be invalid
-            if response.status_code == 200:
-                return {"status": "ok", "latencyMs": round(latency, 2)}
+        
+        if response.status_code == 200:
+            return {"status": "ok", "latencyMs": round(latency, 2)}
+        if response.status_code in (401, 403):
             return {
                 "status": "degraded",
                 "latencyMs": round(latency, 2),
-                "message": f"API returned {response.status_code}",
+                "message": "Invalid API key",
             }
         return {
             "status": "degraded",

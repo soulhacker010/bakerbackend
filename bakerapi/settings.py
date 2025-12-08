@@ -92,6 +92,7 @@ INSTALLED_APPS = [
     'clients',
     'assessments',
     'notifications',
+    'status',
 ]
 
 MIDDLEWARE = [

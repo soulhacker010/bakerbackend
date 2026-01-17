@@ -590,3 +590,64 @@ class RejectUserView(APIView):
             {"detail": f"User {email} has been rejected and removed."},
             status=status.HTTP_200_OK
         )
+
+
+class AllUserSerializer(serializers.ModelSerializer):
+    """Serializer for all users list."""
+    class Meta:
+        model = User
+        fields = ("id", "email", "first_name", "last_name", "profession", "date_joined", "is_active", "is_approved", "is_superuser")
+        read_only_fields = fields
+
+
+class AllUsersView(APIView):
+    """List all approved users (excluding pending). Superuser only."""
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Get all users except pending (is_approved=True) and exclude current superuser
+        users = User.objects.filter(is_approved=True).exclude(id=request.user.id).order_by("-date_joined")
+        serializer = AllUserSerializer(users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ToggleUserActiveView(APIView):
+    """Deactivate or reactivate a user. Superuser only."""
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {"detail": "user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.filter(id=user_id).exclude(is_superuser=True).first()
+        if not user:
+            return Response(
+                {"detail": "User not found or cannot modify superuser."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Toggle is_active
+        user.is_active = not user.is_active
+        user.save(update_fields=["is_active"])
+
+        status_text = "activated" if user.is_active else "deactivated"
+        return Response(
+            {"detail": f"User {user.email} has been {status_text}.", "is_active": user.is_active},
+            status=status.HTTP_200_OK
+        )

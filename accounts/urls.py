@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    AllUsersView,
     ApproveUserView,
     FeedbackSubmissionView,
     LoginView,
@@ -12,6 +13,7 @@ from .views import (
     ProfileView,
     RejectUserView,
     SignupView,
+    ToggleUserActiveView,
     TokenRefreshView,
     TwoFactorResendView,
     TwoFactorVerifyView,
@@ -35,4 +37,7 @@ urlpatterns = [
     path("pending-users/", PendingUsersView.as_view(), name="pending-users"),
     path("approve-user/", ApproveUserView.as_view(), name="approve-user"),
     path("reject-user/", RejectUserView.as_view(), name="reject-user"),
+    # Admin user management endpoints
+    path("all-users/", AllUsersView.as_view(), name="all-users"),
+    path("toggle-user-active/", ToggleUserActiveView.as_view(), name="toggle-user-active"),
 ]

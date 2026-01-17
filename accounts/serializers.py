@@ -24,6 +24,7 @@ PROFILE_FIELDS = (
     "date_joined",
     "is_staff",
     "is_superuser",
+    "is_approved",
 )
 
 
@@ -68,6 +69,12 @@ class LoginSerializer(serializers.Serializer):
         user = authenticate(self.context.get("request"), email=email, password=password)
         if not user:
             raise serializers.ValidationError("Invalid email or password.")
+
+        # Check if user is approved by admin
+        if not user.is_approved:
+            raise serializers.ValidationError(
+                "Your account is pending approval. Please wait for an administrator to approve your registration."
+            )
 
         attrs["user"] = user
         return attrs

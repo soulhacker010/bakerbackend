@@ -3,7 +3,7 @@ from typing import Optional
 
 from django.conf import settings
 from django.utils import timezone
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, serializers, status
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -496,3 +496,97 @@ class LogoutView(APIView):
             pass
 
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+# ============ ADMIN APPROVAL VIEWS ============
+
+class PendingUserSerializer(serializers.ModelSerializer):
+    """Serializer for pending user list."""
+    class Meta:
+        model = User
+        fields = ("id", "email", "first_name", "last_name", "profession", "date_joined")
+        read_only_fields = fields
+
+
+class PendingUsersView(APIView):
+    """List all users pending approval. Superuser only."""
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def get(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        pending_users = User.objects.filter(is_approved=False, is_active=True).order_by("-date_joined")
+        serializer = PendingUserSerializer(pending_users, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ApproveUserView(APIView):
+    """Approve a pending user. Superuser only."""
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {"detail": "user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.filter(id=user_id, is_approved=False).first()
+        if not user:
+            return Response(
+                {"detail": "User not found or already approved."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        user.is_approved = True
+        user.save(update_fields=["is_approved"])
+
+        return Response(
+            {"detail": f"User {user.email} has been approved."},
+            status=status.HTTP_200_OK
+        )
+
+
+class RejectUserView(APIView):
+    """Reject (delete) a pending user. Superuser only."""
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {"detail": "user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.filter(id=user_id, is_approved=False).first()
+        if not user:
+            return Response(
+                {"detail": "User not found or already approved."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        email = user.email
+        user.delete()
+
+        return Response(
+            {"detail": f"User {email} has been rejected and removed."},
+            status=status.HTTP_200_OK
+        )

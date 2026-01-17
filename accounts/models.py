@@ -77,6 +77,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     redirect_link = models.URLField(blank=True)
 
     is_active = models.BooleanField(default=True)
+    is_approved = models.BooleanField(default=False)  # Admin must approve before user can login
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(default=timezone.now)
 

@@ -1,13 +1,16 @@
 from django.urls import path
 
 from .views import (
+    ApproveUserView,
     FeedbackSubmissionView,
     LoginView,
     LogoutView,
     PasswordResetCompleteView,
     PasswordResetRequestView,
     PasswordResetValidateView,
+    PendingUsersView,
     ProfileView,
+    RejectUserView,
     SignupView,
     TokenRefreshView,
     TwoFactorResendView,
@@ -28,4 +31,8 @@ urlpatterns = [
     path("2fa/resend/", TwoFactorResendView.as_view(), name="two-factor-resend"),
     path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("logout/", LogoutView.as_view(), name="logout"),
+    # Admin approval endpoints
+    path("pending-users/", PendingUsersView.as_view(), name="pending-users"),
+    path("approve-user/", ApproveUserView.as_view(), name="approve-user"),
+    path("reject-user/", RejectUserView.as_view(), name="reject-user"),
 ]

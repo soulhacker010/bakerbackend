@@ -651,3 +651,37 @@ class ToggleUserActiveView(APIView):
             {"detail": f"User {user.email} has been {status_text}.", "is_active": user.is_active},
             status=status.HTTP_200_OK
         )
+
+
+class DeleteUserView(APIView):
+    """Permanently delete a user. Superuser only."""
+    permission_classes = (permissions.IsAuthenticated,)
+
+    def post(self, request, *args, **kwargs):
+        if not request.user.is_superuser:
+            return Response(
+                {"detail": "You do not have permission to perform this action."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        user_id = request.data.get("user_id")
+        if not user_id:
+            return Response(
+                {"detail": "user_id is required."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        user = User.objects.filter(id=user_id).exclude(is_superuser=True).first()
+        if not user:
+            return Response(
+                {"detail": "User not found or cannot delete superuser."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        email = user.email
+        user.delete()
+
+        return Response(
+            {"detail": f"User {email} has been permanently deleted."},
+            status=status.HTTP_200_OK
+        )

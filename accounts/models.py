@@ -116,6 +116,32 @@ class TwoFactorChallenge(models.Model):
         return f"TwoFactorChallenge<{self.challenge_id}> for {self.user_id}"
 
 
+class SignupVerificationChallenge(models.Model):
+    """Stores email verification codes sent during registration."""
+    challenge_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    email = models.EmailField()
+    first_name = models.CharField(max_length=150)
+    last_name = models.CharField(max_length=150)
+    profession = models.CharField(max_length=150, blank=True)
+    password_hash = models.CharField(max_length=128)
+    code_hash = models.CharField(max_length=128)
+    code_salt = models.CharField(max_length=32)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    last_sent_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=("email", "challenge_id")),
+            models.Index(fields=("expires_at",)),
+        ]
+
+    def __str__(self) -> str:  # pragma: no cover - repr utility
+        return f"SignupVerificationChallenge<{self.challenge_id}> for {self.email}"
+
+
 class PasswordResetToken(models.Model):
     user = models.ForeignKey(
         User,

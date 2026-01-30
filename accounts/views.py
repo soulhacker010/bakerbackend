@@ -117,10 +117,61 @@ class SignupView(generics.CreateAPIView):
         error_response = _validate_turnstile_or_response(request, serializer.validated_data.get("turnstile_token"))
         if error_response is not None:
             return error_response
-        user = serializer.save()
+
+        # Import here to avoid circular dependency
+        from .email_signup_verification import SignupVerificationEmail, SignupVerificationEmailError, send_signup_verification_email
+        from .signup_verification import create_signup_verification_challenge
+
+        email = serializer.validated_data["email"]
+        first_name = serializer.validated_data["first_name"]
+        last_name = serializer.validated_data["last_name"]
+        profession = serializer.validated_data.get("profession", "")
+        password = serializer.validated_data["password"]
+
+        # Check if user already exists
+        if User.objects.filter(email=email).exists():
+            return Response(
+                {"detail": "An account with this email already exists."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Create verification challenge and send OTP
+        challenge, code = create_signup_verification_challenge(
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            profession=profession,
+            password=password,
+        )
+
+        recipient_name = f"{first_name} {last_name}".strip() or email
+
+        try:
+            send_signup_verification_email(
+                SignupVerificationEmail(
+                    recipient=email,
+                    recipient_name=recipient_name,
+                    code=code,
+                )
+            )
+        except SignupVerificationEmailError as exc:
+            challenge.delete()
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
         headers = self.get_success_headers(serializer.data)
-        payload = _build_auth_payload(user)
-        return Response(payload, status=status.HTTP_201_CREATED, headers=headers)
+        return Response(
+            {
+                "detail": "verification_required",
+                "challengeId": str(challenge.challenge_id),
+                "expiresAt": challenge.expires_at.isoformat(),
+                "resendAvailableIn": 30,  # seconds
+            },
+            status=status.HTTP_200_OK,
+            headers=headers
+        )
 
 
 class LoginView(APIView):
@@ -683,5 +734,147 @@ class DeleteUserView(APIView):
 
         return Response(
             {"detail": f"User {email} has been permanently deleted."},
+            status=status.HTTP_200_OK
+        )
+
+
+class SignupVerifyView(APIView):
+    """Verify signup OTP and create user account."""
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-signup-verify"
+
+    def post(self, request, *args, **kwargs):
+        from .email_signup_verification import SignupVerificationEmailError
+        from .models import SignupVerificationChallenge
+        from .serializers import SignupVerifySerializer
+        from .signup_verification import verify_signup_code
+
+        serializer = SignupVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        challenge_id = serializer.validated_data["challenge_id"]
+        code = serializer.validated_data["code"]
+
+        challenge = SignupVerificationChallenge.objects.filter(challenge_id=challenge_id).first()
+        if not challenge:
+            return Response(
+                {"detail": "Verification challenge not found or expired."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if challenge expired
+        if timezone.now() >= challenge.expires_at:
+            challenge.delete()
+            return Response(
+                {"detail": "Verification code has expired. Please sign up again."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check attempts
+        if challenge.attempts >= 5:
+            challenge.delete()
+            return Response(
+                {"detail": "Too many incorrect attempts. Please sign up again."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        # Verify code
+        if not verify_signup_code(challenge, code):
+            challenge.attempts += 1
+            challenge.save(update_fields=["attempts", "updated_at"])
+            remaining = 5 - challenge.attempts
+            return Response(
+                {"detail": f"Invalid verification code. {remaining} attempts remaining."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Code is valid, create user account
+        try:
+            user = User.objects.create(
+                email=challenge.email,
+                first_name=challenge.first_name,
+                last_name=challenge.last_name,
+                profession=challenge.profession,
+                password=challenge.password_hash,
+                is_approved=False,  # Requires admin approval
+                is_active=True,
+            )
+            challenge.delete()
+
+            return Response(
+                {"detail": "Email verified successfully! Your account is pending admin approval."},
+                status=status.HTTP_200_OK
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": "Unable to create account. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SignupResendView(APIView):
+    """Resend signup verification OTP."""
+    permission_classes = (permissions.AllowAny,)
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = "auth-signup-resend"
+
+    def post(self, request, *args, **kwargs):
+        from .email_signup_verification import SignupVerificationEmail, SignupVerificationEmailError, send_signup_verification_email
+        from .models import SignupVerificationChallenge
+        from .serializers import SignupResendSerializer
+        from .signup_verification import regenerate_signup_verification_code
+
+        serializer = SignupResendSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        challenge_id = serializer.validated_data["challenge_id"]
+
+        challenge = SignupVerificationChallenge.objects.filter(challenge_id=challenge_id).first()
+        if not challenge:
+            return Response(
+                {"detail": "Verification challenge not found or expired."},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Check if challenge expired
+        if timezone.now() >= challenge.expires_at:
+            challenge.delete()
+            return Response(
+                {"detail": "Verification session has expired. Please sign up again."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Check resend throttle (30 seconds)
+        if timezone.now() < challenge.last_sent_at + timedelta(seconds=30):
+            return Response(
+                {"detail": "Please wait before requesting another code."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        # Generate new code and send
+        code = regenerate_signup_verification_code(challenge)
+        recipient_name = f"{challenge.first_name} {challenge.last_name}".strip() or challenge.email
+
+        try:
+            send_signup_verification_email(
+                SignupVerificationEmail(
+                    recipient=challenge.email,
+                    recipient_name=recipient_name,
+                    code=code,
+                )
+            )
+        except SignupVerificationEmailError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
+        return Response(
+            {
+                "detail": "verification_code_sent",
+                "expiresAt": challenge.expires_at.isoformat(),
+                "resendAvailableIn": 30,
+            },
             status=status.HTTP_200_OK
         )

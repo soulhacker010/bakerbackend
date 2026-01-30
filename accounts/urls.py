@@ -14,6 +14,8 @@ from .views import (
     ProfileView,
     RejectUserView,
     SignupView,
+    SignupVerifyView,
+    SignupResendView,
     ToggleUserActiveView,
     TokenRefreshView,
     TwoFactorResendView,
@@ -24,6 +26,8 @@ app_name = "accounts"
 
 urlpatterns = [
     path("signup/", SignupView.as_view(), name="signup"),
+    path("signup/verify/", SignupVerifyView.as_view(), name="signup-verify"),
+    path("signup/resend/", SignupResendView.as_view(), name="signup-resend"),
     path("login/", LoginView.as_view(), name="login"),
     path("profile/", ProfileView.as_view(), name="profile"),
     path("feedback/", FeedbackSubmissionView.as_view(), name="feedback"),

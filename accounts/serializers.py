@@ -155,3 +155,18 @@ class PasswordResetCompleteSerializer(serializers.Serializer):
         attrs["user"] = token.user
         attrs["raw_token"] = raw_token
         return attrs
+
+
+class SignupVerifySerializer(serializers.Serializer):
+    challenge_id = serializers.UUIDField()
+    code = serializers.CharField(max_length=10, trim_whitespace=True)
+
+    def validate_code(self, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned.isdigit():
+            raise serializers.ValidationError("Verification code must contain only digits.")
+        return cleaned
+
+
+class SignupResendSerializer(serializers.Serializer):
+    challenge_id = serializers.UUIDField()

@@ -176,6 +176,8 @@ REST_FRAMEWORK = {
         'anon': os.environ.get('DRF_THROTTLE_ANON', '50/min'),
         'auth-login': os.environ.get('DRF_THROTTLE_AUTH_LOGIN', '10/min'),
         'auth-2fa': os.environ.get('DRF_THROTTLE_AUTH_2FA', '20/min'),
+        'auth-signup-verify': os.environ.get('DRF_THROTTLE_AUTH_SIGNUP_VERIFY', '10/min'),
+        'auth-signup-resend': os.environ.get('DRF_THROTTLE_AUTH_SIGNUP_RESEND', '5/min'),
         'auth-refresh': os.environ.get('DRF_THROTTLE_AUTH_REFRESH', '30/min'),
         'auth-logout': os.environ.get('DRF_THROTTLE_AUTH_LOGOUT', '30/min'),
         'respondent-link': os.environ.get('DRF_THROTTLE_RESPONDENT_LINK', '30/min'),

@@ -408,13 +408,33 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
     client_slug = serializers.SlugRelatedField(
         source="client",
         slug_field="slug",
-        queryset=Client.objects.all(),
+        queryset=Client.objects.none(),
         required=False,
         allow_null=True,
     )
     responses = ResponseItemSerializer(many=True, write_only=True)
     client = serializers.SerializerMethodField(read_only=True)
     answers = serializers.SerializerMethodField(read_only=True)
+
+    def get_fields(self):
+        # Client slugs are only unique per owner, so the lookup must be scoped to
+        # one clinician. Unscoped, an identical slug under two owners raises
+        # MultipleObjectsReturned, and a response can be written onto the wrong
+        # clinician's client. Fails closed when no owner can be determined.
+        fields = super().get_fields()
+        fields["client_slug"].queryset = self._client_queryset()
+        return fields
+
+    def _client_queryset(self):
+        owner_id = self.context.get("client_owner_id")
+        if owner_id is None:
+            request = self.context.get("request")
+            user = getattr(request, "user", None)
+            if user is not None and user.is_authenticated:
+                owner_id = user.pk
+        if owner_id is None:
+            return Client.objects.none()
+        return Client.objects.filter(owner_id=owner_id)
 
     class Meta:
         model = AssessmentResponse

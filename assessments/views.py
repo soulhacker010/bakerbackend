@@ -820,7 +820,10 @@ class RespondentAssessmentResponseView(APIView):
         except RespondentLinkError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer = AssessmentResponseSerializer(data=payload, context={"request": request})
+        serializer = AssessmentResponseSerializer(
+            data=payload,
+            context={"request": request, "client_owner_id": link_payload.owner_id},
+        )
         serializer.is_valid(raise_exception=True)
 
         assessment_slug = serializer.validated_data["assessment"].slug

@@ -11,14 +11,15 @@ from django.test import override_settings
 from django.urls import reverse
 from django.utils.crypto import get_random_string
 from rest_framework import status
-from rest_framework.test import APITestCase
+
+from bakerapi.test_utils import ThrottledAPITestCase
 
 from assessments.models import Assessment, AssessmentQuestion, AssessmentResponse
 from clients.models import Client
 
 
 @override_settings(TURNSTILE_ENABLED=False)
-class RespondentEndToEndTests(APITestCase):
+class RespondentEndToEndTests(ThrottledAPITestCase):
     """A clinician sends an assessment; a respondent completes it."""
 
     def setUp(self):

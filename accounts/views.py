@@ -498,7 +498,7 @@ class TokenRefreshView(APIView):
             return Response({"detail": "Invalid refresh token."}, status=status.HTTP_401_UNAUTHORIZED)
 
         user_id = refresh_token.get("user_id")
-        user = User.objects.filter(id=user_id).first()
+        user = User.objects.filter(id=user_id, is_active=True).first()
         if not user:
             return Response({"detail": "Refresh token is no longer valid."}, status=status.HTTP_401_UNAUTHORIZED)
 

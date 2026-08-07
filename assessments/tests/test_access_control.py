@@ -12,7 +12,8 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from rest_framework import status
-from rest_framework.test import APITestCase
+
+from bakerapi.test_utils import ThrottledAPITestCase
 
 from assessments.models import (
     Assessment,
@@ -56,7 +57,7 @@ ANSWERS = [{"question_identifier": "sleep", "value": 3}]
 
 
 @override_settings(TURNSTILE_ENABLED=False)
-class SameSlugAcrossCliniciansTests(APITestCase):
+class SameSlugAcrossCliniciansTests(ThrottledAPITestCase):
     """Client slugs are unique per clinician, so two clinicians can share one.
 
     Slugs are generated from the client's name, so two practitioners each with a
@@ -181,7 +182,7 @@ class SameSlugAcrossCliniciansTests(APITestCase):
 
 
 @override_settings(TURNSTILE_ENABLED=False)
-class CrossClinicianResponseVisibilityTests(APITestCase):
+class CrossClinicianResponseVisibilityTests(ThrottledAPITestCase):
     """Clinician A cannot list or retrieve clinician B's assessment responses."""
 
     def setUp(self):
@@ -234,7 +235,7 @@ class CrossClinicianResponseVisibilityTests(APITestCase):
 
 
 @override_settings(TURNSTILE_ENABLED=False)
-class RespondentLinkGuardTests(APITestCase):
+class RespondentLinkGuardTests(ThrottledAPITestCase):
     """The public respondent link must stay inside the bounds of its invitation."""
 
     def setUp(self):

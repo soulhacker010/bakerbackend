@@ -8,6 +8,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from audit.mixins import AuditLogMixin
+from audit.models import AuditLog
+from audit.services import record_audit
+
 from clients.models import Client
 from clients.serializers import generate_unique_client_slug, update_client_group_cache
 from django.utils import timezone
@@ -97,9 +101,11 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         return self.action in {"list", "retrieve", "published"}
 
 
-class AssessmentResponseViewSet(viewsets.ModelViewSet):
+class AssessmentResponseViewSet(AuditLogMixin, viewsets.ModelViewSet):
     serializer_class = AssessmentResponseSerializer
     permission_classes = (permissions.IsAuthenticated,)
+    audit_resource_type = AuditLog.ResourceType.ASSESSMENT_RESPONSE
+    audit_actions = (AuditLog.Action.VIEW, AuditLog.Action.DELETE)
 
     def get_queryset(self):
         user = self.request.user
@@ -841,6 +847,16 @@ class RespondentAssessmentResponseView(APIView):
         instance = serializer.save()
 
         mark_invite_used(token)
+
+        # A completed assessment being recorded is a real PHI event, so it belongs
+        # in the trail even though nobody is signed in.
+        record_audit(
+            request,
+            action=AuditLog.Action.SUBMIT,
+            resource_type=AuditLog.ResourceType.ASSESSMENT_RESPONSE,
+            resource_id=str(instance.pk),
+            user=None,
+        )
 
         response_data = AssessmentResponseSerializer(instance).data
         return Response(response_data, status=status.HTTP_201_CREATED)

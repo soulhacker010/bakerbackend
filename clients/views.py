@@ -4,6 +4,10 @@ from rest_framework import exceptions, permissions, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from audit.mixins import AuditLogMixin
+from audit.models import AuditLog
+from audit.services import record_audit
+
 from .models import Client, ClientGroup
 from .permissions import HasClientAccess
 from .serializers import (
@@ -15,11 +19,12 @@ from .serializers import (
 )
 
 
-class ClientViewSet(viewsets.ModelViewSet):
+class ClientViewSet(AuditLogMixin, viewsets.ModelViewSet):
     serializer_class = ClientSerializer
     permission_classes = (permissions.IsAuthenticated, HasClientAccess)
     lookup_field = "slug"
     lookup_value_regex = r"[^/]+"
+    audit_resource_type = AuditLog.ResourceType.CLIENT
 
     def get_queryset(self):
         return Client.objects.filter(owner=self.request.user).order_by("-created_at")
@@ -76,6 +81,15 @@ class ClientViewSet(viewsets.ModelViewSet):
                     "name": client.__str__(),
                 }
             )
+
+        # One entry for the request as a whole. The imported people's details are
+        # deliberately not recorded, so the identifier is left blank.
+        record_audit(
+            request,
+            action=AuditLog.Action.CREATE,
+            resource_type=AuditLog.ResourceType.CLIENT,
+            resource_id="",
+        )
 
         return Response({"summary": summary, "results": results}, status=status.HTTP_200_OK)
 
@@ -168,11 +182,12 @@ class ClientViewSet(viewsets.ModelViewSet):
         return client, "created"
 
 
-class ClientGroupViewSet(viewsets.ModelViewSet):
+class ClientGroupViewSet(AuditLogMixin, viewsets.ModelViewSet):
     serializer_class = ClientGroupSerializer
     permission_classes = (permissions.IsAuthenticated,)
     lookup_field = "slug"
     lookup_value_regex = r"[^/]+"
+    audit_resource_type = AuditLog.ResourceType.CLIENT_GROUP
 
     def get_queryset(self):
         return ClientGroup.objects.filter(owner=self.request.user).order_by("-created_at")

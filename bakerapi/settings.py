@@ -93,6 +93,7 @@ INSTALLED_APPS = [
     'assessments',
     'notifications',
     'status',
+    'audit',
 ]
 
 MIDDLEWARE = [

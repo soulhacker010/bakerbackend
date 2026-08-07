@@ -243,6 +243,27 @@ class AssessmentResponseAuditTests(ThrottledAPITestCase):
         self.assertEqual(entry.resource_type, AuditLog.ResourceType.ASSESSMENT_RESPONSE)
         self.assertEqual(entry.resource_id, str(self.response_record.pk))
 
+    def test_clinician_recording_a_response_is_audited(self):
+        """A result typed in during a session is PHI arriving, same as a submission."""
+        self.client.force_authenticate(self.clinician)
+
+        response = self.client.post(
+            reverse("assessments:assessment-response-list"),
+            data={
+                "assessment_slug": self.assessment.slug,
+                "client_slug": self.record.slug,
+                "responses": [{"question_identifier": "sleep", "value": 4}],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        entry = AuditLog.objects.get()
+        self.assertEqual(entry.action, AuditLog.Action.CREATE)
+        self.assertEqual(entry.resource_type, AuditLog.ResourceType.ASSESSMENT_RESPONSE)
+        self.assertEqual(entry.resource_id, str(response.json()["id"]))
+        self.assertEqual(entry.user_id, self.clinician.id)
+
     def test_deleting_a_response_is_audited(self):
         self.client.force_authenticate(self.clinician)
         pk = self.response_record.pk

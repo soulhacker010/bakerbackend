@@ -5,6 +5,7 @@ from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
+from django.core.exceptions import ImproperlyConfigured
 
 try:  # pragma: no cover - optional dependency
     import sentry_sdk
@@ -30,11 +31,18 @@ if load_dotenv is not None:
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get("SECRET_KEY", "django-insecure-$b=pmh)5o0s+ebx5@d3halcj=xgw@@efkvb3_&7x@c__593ou*")
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get("DEBUG", "false").lower() in {"1", "true", "yes", "on"}
+
+# SECURITY WARNING: keep the secret key used in production secret!
+# This key signs respondent invite links, password reset links and sessions, so
+# falling back to a published literal would let anyone forge them. Refuse to boot
+# instead, matching the DATABASE_URL guard below.
+SECRET_KEY = os.environ.get("SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    if not DEBUG:
+        raise ImproperlyConfigured("SECRET_KEY must be set when DEBUG is False.")
+    SECRET_KEY = "django-insecure-local-development-only-do-not-deploy"
 
 SIGNUP_ENABLED = os.environ.get("SIGNUP_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 

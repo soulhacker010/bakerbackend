@@ -105,7 +105,7 @@ class AssessmentResponseViewSet(AuditLogMixin, viewsets.ModelViewSet):
     serializer_class = AssessmentResponseSerializer
     permission_classes = (permissions.IsAuthenticated,)
     audit_resource_type = AuditLog.ResourceType.ASSESSMENT_RESPONSE
-    audit_actions = (AuditLog.Action.VIEW, AuditLog.Action.DELETE)
+    audit_actions = (AuditLog.Action.VIEW, AuditLog.Action.CREATE, AuditLog.Action.DELETE)
 
     def get_queryset(self):
         user = self.request.user

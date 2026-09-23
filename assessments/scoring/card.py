@@ -35,6 +35,10 @@ class QuestionRule:
     domain: Optional[str] = None
     weight: float = 1.0
     reverse: bool = False
+    # Not every scale starts at zero. The ABA Caregiver Stress Assessment runs
+    # 1-5, so its 13 items can never total less than 13, and bands written from
+    # zero would leave the bottom of the range unreachable.
+    scale_min: float = 0.0
     scale_max: Optional[float] = None
     # False for questions that are collected but must never reach a total, such
     # as the Sleep & Recovery red flags (items 16-22) or a free-text comment.
@@ -65,12 +69,23 @@ class QuestionRule:
 
     def max_contribution(self) -> float:
         """The most this question can add. Used to build the denominator."""
+        return max(self._bounds())
+
+    def min_contribution(self) -> float:
+        """The least this question can add when it is answered at all."""
+        return min(self._bounds())
+
+    def _bounds(self) -> tuple:
         if self.scale_max is None:
             raise CardError(
                 f"Question {self.identifier!r} needs scale_max to take part in a "
                 "normalised or averaged score."
             )
-        return float(self.scale_max) * self.weight
+        # Reversing turns the scale around, so the bounds swap with it: an item
+        # answered at the top of a reversed 1-5 scale contributes zero, not five.
+        low = self.contribution(self.scale_min)
+        high = self.contribution(self.scale_max)
+        return (low, high)
 
 
 # --------------------------------------------------------------------------- #
@@ -164,6 +179,10 @@ class ScoreRule:
     transform: Optional[Transform] = None
     bands: Sequence[Band] = field(default_factory=tuple)
     precision: int = 2
+    # The smallest step between two possible scores. Most instruments move in
+    # whole numbers, so bands of 0-15 and 16-30 sit flush against each other.
+    # The Postpartum screener weights items by 1.5 and lands on half points.
+    granularity: float = 1.0
     # threshold_count only: how many qualifying answers make the screen positive.
     positive_at: Optional[int] = None
 

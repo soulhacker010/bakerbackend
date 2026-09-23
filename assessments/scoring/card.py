@@ -46,6 +46,10 @@ class QuestionRule:
     allow_na: bool = False
     # Only used by the threshold_count method: the answers that count as a hit.
     qualifying_values: Optional[frozenset] = None
+    # Respondents submit the option text, not a number: live answers look like
+    # "Moderate (2)" or "0 - Never". This maps every form an answer may arrive in
+    # to the value it carries, so nothing has to be guessed at scoring time.
+    options: Optional[Dict[str, float]] = None
 
     def __post_init__(self) -> None:
         if self.reverse and self.scale_max is None:
@@ -57,6 +61,35 @@ class QuestionRule:
                 f"Question {self.identifier!r} has weight 0. Use scored=False to exclude it, "
                 "so the intent is explicit."
             )
+
+    def value_of(self, answer: Any) -> Optional[float]:
+        """The number an answer is worth, or None when it carries none.
+
+        Deliberately refuses to dig a number out of arbitrary text. The engine
+        this replaces ran a regular expression over every answer, so a written
+        reply of "about 3 times a week" added 3 to a clinical total.
+        """
+        if self.options:
+            if isinstance(answer, str):
+                found = self.options.get(answer.strip())
+                if found is None:
+                    found = self.options.get(answer.strip().lower())
+                if found is not None:
+                    return found
+            elif isinstance(answer, (int, float)) and not isinstance(answer, bool):
+                return float(answer)
+            return None
+
+        if isinstance(answer, bool):
+            return 1.0 if answer else 0.0
+        if isinstance(answer, (int, float)):
+            return float(answer)
+        if isinstance(answer, str):
+            try:
+                return float(answer.strip())
+            except ValueError:
+                return None
+        return None
 
     def contribution(self, answer: float) -> float:
         """The value this answer adds, after reversing and weighting."""

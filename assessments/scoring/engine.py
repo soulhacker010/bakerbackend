@@ -173,7 +173,8 @@ def _from_questions(
                 qualifying += 1
             continue
 
-        value = _numeric(raw)
+        # The question resolves its own answer, because it knows its options.
+        value = rule.value_of(raw)
         if value is None:
             # An unparseable answer is not a zero. Treat it as unanswered so it
             # cannot quietly drag a total down.

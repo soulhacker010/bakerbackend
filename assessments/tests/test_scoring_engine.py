@@ -179,8 +179,10 @@ def hpsrs_card():
         QuestionRule(identifier=f"s{i}", domain="sleep", scale_max=3)
         for i in range(1, 16)
     ]
+    # Same domain as the scored items on purpose: the only thing that may keep
+    # these out of the total is scored=False, so the flag itself is under test.
     red_flags = [
-        QuestionRule(identifier=f"s{i}", scored=False)
+        QuestionRule(identifier=f"s{i}", domain="sleep", scored=False)
         for i in range(16, 23)
     ]
     overall = ScoreRule(
@@ -579,6 +581,24 @@ class SafetyTests(SimpleTestCase):
         )
         result = score_assessment(card, {"q1": 2, "note": "about 3 times a week"})
         self.assertEqual(result.score("total").value, 2)
+
+    def test_free_text_on_a_scored_question_contributes_nothing(self):
+        """The live engine pulled the first number out of any string.
+
+        A respondent typing "about 3 times a week" into a scored free-text box
+        added 3 to their clinical total.
+        """
+        card = ScoringCard(
+            questions=[
+                QuestionRule(identifier="q1", domain="d", scale_max=3),
+                QuestionRule(identifier="q2", domain="d", scale_max=3),
+            ],
+            scores=[ScoreRule(id="total", label="Total", domain="d")],
+        )
+        result = score_assessment(card, {"q1": 1, "q2": "about 3 times a week"})
+        total = result.score("total")
+        self.assertEqual(total.value, 1)
+        self.assertEqual(total.answered, 1)
 
     def test_an_unparseable_answer_is_not_counted_as_zero(self):
         card = ScoringCard(

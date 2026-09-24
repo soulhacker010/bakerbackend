@@ -315,6 +315,9 @@ class ScoringCard:
     questions: Sequence[QuestionRule]
     scores: Sequence[ScoreRule] = field(default_factory=tuple)
     flags: Sequence[FlagRule] = field(default_factory=tuple)
+    # Which score fills the headline figure a result is filed under. Left unset,
+    # an overall or total is preferred, falling back to the last score declared.
+    primary_score: Optional[str] = None
     # Printed on every report for this instrument, e.g. the Sleep & Recovery and
     # Return to Play statements that their cut-offs are provisional.
     standing_notice: str = ""
@@ -357,6 +360,21 @@ class ScoringCard:
         # that cannot be scored is refused when it is built instead of failing in
         # front of a respondent who has just filled the form in.
         self.ordered_scores()
+
+    def primary(self) -> Optional[ScoreRule]:
+        """The score a result is headlined by."""
+        if not self.scores:
+            return None
+        if self.primary_score:
+            for score in self.scores:
+                if score.id == self.primary_score:
+                    return score
+            raise CardError(f"primary_score {self.primary_score!r} is not a score on this card.")
+        for preferred in ("overall", "total"):
+            for score in self.scores:
+                if score.id == preferred:
+                    return score
+        return self.scores[-1]
 
     def question(self, identifier: str) -> Optional[QuestionRule]:
         for rule in self.questions:

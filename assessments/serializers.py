@@ -21,6 +21,7 @@ from .models import (
     RespondentInviteSchedule,
     RespondentInviteScheduleRun,
 )
+from .scoring.service import has_card, score_response
 
 
 logger = logging.getLogger(__name__)
@@ -647,6 +648,21 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
 
         method = scoring.method
         configuration = scoring.configuration or {}
+
+        # Assessments move onto the scoring card one at a time. Until one has a
+        # card written for it, the original path below runs untouched, so adding
+        # the engine changes no existing result.
+        if has_card(assessment):
+            try:
+                return score_response(assessment, responses)
+            except Exception:  # pragma: no cover - defensive
+                # A card that cannot be read is a configuration problem, and it
+                # must never be the reason a respondent's submission is rejected.
+                # Fall through to the original scoring and record it for repair.
+                logger.exception(
+                    "Scoring card failed for assessment %s; used legacy scoring instead.",
+                    assessment.pk,
+                )
 
         if method == AssessmentScoringConfig.Method.SUM:
             return self._calculate_sum_score(configuration, responses)

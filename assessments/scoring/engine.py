@@ -278,7 +278,12 @@ def _flags(
                 if is_na(raw):
                     outcomes.append(False)
                     continue
-                value = _numeric(raw)
+                # Resolve through the question, which knows its own options.
+                # Answers arrive as their display text, so a critical item
+                # answered "Very Severe (4)" has to be understood as 4 or the
+                # flag silently never fires.
+                rule = card.question(identifier)
+                value = rule.value_of(raw) if rule is not None else _numeric(raw)
                 if value is None:
                     # Yes/No red flags arrive as text. Compare on equality only,
                     # since ordering has no meaning for them.

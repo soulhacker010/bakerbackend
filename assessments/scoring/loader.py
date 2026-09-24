@@ -220,6 +220,7 @@ def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
         scores=scores,
         flags=flags,
         standing_notice=str(data.get("standing_notice") or ""),
+        primary_score=data.get("primary_score"),
     )
 
 
@@ -283,6 +284,7 @@ def card_to_dict(card: ScoringCard) -> Dict[str, Any]:
             for f in card.flags
         ],
         "standing_notice": card.standing_notice,
+        "primary_score": card.primary_score,
     }
 
 

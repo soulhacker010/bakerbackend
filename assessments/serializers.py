@@ -1,5 +1,6 @@
 import logging
 import re
+from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional
 
 from django.db import transaction
@@ -22,7 +23,7 @@ from .models import (
     RespondentInviteScheduleRun,
 )
 from .scoring.card import CardError
-from .scoring.loader import card_from_dict
+from .scoring.loader import card_from_dict, expand_card
 from .scoring.service import has_card, score_response
 from .scoring.validation import ERROR, validate_card
 
@@ -220,7 +221,9 @@ class AssessmentSerializer(serializers.ModelSerializer):
             return
 
         try:
-            card = card_from_dict(card_data)
+            # The editor sends only the choices a person makes; the answer scale
+            # comes from the questions themselves.
+            card = card_from_dict(expand_card(card_data, self._questions_for_card(attrs)))
         except (CardError, KeyError, TypeError, ValueError) as exc:
             raise serializers.ValidationError({"scoring": [f"Scoring card is malformed: {exc}"]})
 
@@ -231,6 +234,28 @@ class AssessmentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "scoring": [f"{p.score_id}: {p.message}" for p in problems]
             })
+
+    def _questions_for_card(self, attrs) -> list:
+        """The questions the card is being written against.
+
+        On a create these arrive in the payload as plain dicts; on a partial
+        update only the stored ones exist. Both are presented the same way so the
+        card expansion does not have to care which.
+        """
+        supplied = attrs.get("questions")
+        if supplied is not None:
+            return [
+                SimpleNamespace(
+                    identifier=item.get("identifier") or "",
+                    config=item.get("config") or {},
+                    domain=item.get("domain") or "general",
+                    order=item.get("order") or 0,
+                )
+                for item in supplied
+            ]
+        if self.instance is not None:
+            return list(self.instance.questions.all())
+        return []
 
     def _check_card_covers_the_questions(self, attrs, card) -> None:
         """Every question scored exactly once, in both directions.

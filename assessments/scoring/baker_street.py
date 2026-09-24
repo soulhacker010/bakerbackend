@@ -15,6 +15,10 @@ from typing import List, Sequence
 
 from .card import (
     Band,
+    CLINICIAN,
+    URGENT,
+    REVIEW,
+    FlagRule,
     CardError,
     QuestionRule,
     ScoreRule,
@@ -31,6 +35,56 @@ def _rules(questions: Sequence, expected: int, name: str) -> List[QuestionRule]:
             f"{name} expects {expected} questions but this assessment has {len(ordered)}."
         )
     return [question_rule(q) for q in ordered]
+
+
+def _sequential_domains(
+    rules: List[QuestionRule],
+    layout: Sequence[tuple],
+) -> List[QuestionRule]:
+    """Assign questions to sections in document order.
+
+    Every one of these instruments lists its sections in order, each followed by
+    its own questions, so section membership follows position. ``layout`` is a
+    list of ``(domain, count)`` pairs and must account for every question.
+    """
+    total = sum(count for _, count in layout)
+    if total != len(rules):
+        raise CardError(
+            f"Section layout covers {total} questions but the assessment has {len(rules)}."
+        )
+    assigned: List[QuestionRule] = []
+    index = 0
+    for domain, count in layout:
+        for _ in range(count):
+            rule = rules[index]
+            assigned.append(QuestionRule(
+                identifier=rule.identifier,
+                domain=domain,
+                weight=rule.weight,
+                reverse=rule.reverse,
+                scale_min=rule.scale_min,
+                scale_max=rule.scale_max,
+                scored=rule.scored,
+                allow_na=rule.allow_na,
+                options=rule.options,
+            ))
+            index += 1
+    return assigned
+
+
+def _require_scale(rules: Sequence[QuestionRule], low: float, high: float, name: str) -> None:
+    for rule in rules:
+        if rule.scale_min != low or rule.scale_max != high:
+            raise CardError(
+                f"{name} is scored on {low:g}-{high:g}, but question {rule.identifier!r} "
+                f"offers {rule.scale_min:g}-"
+                f"{rule.scale_max if rule.scale_max is not None else '?'}."
+            )
+
+
+def _bands(*entries) -> List[Band]:
+    """``(id, label, min, max, description)`` tuples, in order."""
+    return [Band(i, label, low, high, text) for i, label, low, high, text in entries]
 
 
 def health_in_motion(questions: Sequence) -> ScoringCard:

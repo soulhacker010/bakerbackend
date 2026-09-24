@@ -13,6 +13,7 @@ from assessments.models import AssessmentQuestion
 from assessments.scoring import CardError, ScoringCard, score_assessment
 from assessments.scoring.loader import (
     card_from_dict,
+    expand_card,
     card_to_dict,
     legacy_card,
     option_map,
@@ -223,3 +224,65 @@ class RoundTripTests(SimpleTestCase):
             score_assessment(restored, answers).score("total").value,
             score_assessment(original, answers).score("total").value,
         )
+
+
+class ExpandCardTests(SimpleTestCase):
+    """The editor sends choices; the answer scale is derived from the questions."""
+
+    def questions(self):
+        return [
+            question("q1", NUMBER_LAST),
+            question("q2", NUMBER_LAST),
+            question("note", ["Alcohol", "Drugs"]),
+        ]
+
+    def light_card(self):
+        return {
+            "questions": [
+                {"identifier": "q1", "domain": "pain", "weight": 1.5},
+                {"identifier": "q2", "domain": "pain", "reverse": True},
+                {"identifier": "note", "domain": "pain"},
+            ],
+            "scores": [{"id": "pain", "label": "Pain", "domain": "pain"}],
+        }
+
+    def test_the_answer_scale_is_filled_in_from_the_question(self):
+        expanded = expand_card(self.light_card(), self.questions())
+        first = expanded["questions"][0]
+        self.assertEqual(first["scale_min"], 0)
+        self.assertEqual(first["scale_max"], 4)
+        self.assertIn("Moderate (2)", first["options"])
+        # and the choices the editor made are untouched
+        self.assertEqual(first["weight"], 1.5)
+        self.assertTrue(expanded["questions"][1]["reverse"])
+
+    def test_a_question_with_no_numeric_options_is_forced_unscored(self):
+        expanded = expand_card(self.light_card(), self.questions())
+        note = expanded["questions"][2]
+        self.assertFalse(note["scored"])
+
+    def test_the_expanded_card_scores_correctly(self):
+        card = card_from_dict(expand_card(self.light_card(), self.questions()))
+        result = score_assessment(card, {
+            "q1": "Mild (1)",             # weighted 1.5
+            "q2": "Mild (1)",             # reversed on 0-4, so worth 3
+            "note": "Alcohol",            # never counted
+        })
+        self.assertEqual(result.score("pain").value, 4.5)
+        self.assertEqual(result.score("pain").applicable, 2)
+
+    def test_a_fully_specified_card_passes_through_unchanged(self):
+        full = {
+            "questions": [{"identifier": "q1", "domain": "d", "scale_min": 0,
+                           "scale_max": 3, "options": {"a": 1.0}}],
+            "scores": [{"id": "total", "label": "Total", "domain": "d"}],
+        }
+        expanded = expand_card(full, self.questions())
+        self.assertEqual(expanded["questions"][0]["scale_max"], 3)
+        self.assertEqual(expanded["questions"][0]["options"], {"a": 1.0})
+
+    def test_a_card_question_the_assessment_lacks_is_left_for_validation_to_reject(self):
+        card = {"questions": [{"identifier": "ghost", "domain": "d"}], "scores": []}
+        expanded = expand_card(card, self.questions())
+        self.assertEqual(expanded["questions"][0]["identifier"], "ghost")
+        self.assertNotIn("scale_max", expanded["questions"][0])

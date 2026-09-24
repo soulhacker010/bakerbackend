@@ -158,6 +158,45 @@ def _transform_from(data: Optional[Mapping[str, Any]]) -> Optional[Transform]:
     )
 
 
+def expand_card(data: Mapping[str, Any], questions: Sequence[Any]) -> Dict[str, Any]:
+    """Fill in each card question's answer scale from the assessment itself.
+
+    The editor sends only the parts a person chooses: which section a question
+    belongs to, whether it is weighted, reversed or excluded. The answer scale is
+    not a choice, it is a fact about the question's options, so it is derived here
+    rather than sent. That keeps option parsing in one place, where the two ends
+    cannot drift apart.
+
+    Anything the caller did supply is left alone, so a fully specified card passes
+    through unchanged.
+    """
+    by_identifier = {q.identifier: q for q in questions}
+    expanded: List[Dict[str, Any]] = []
+
+    for entry in data.get("questions") or ():
+        merged = dict(entry)
+        question = by_identifier.get(str(entry.get("identifier")))
+        if question is None:
+            expanded.append(merged)
+            continue
+
+        derived = question_rule(question)
+        merged.setdefault("domain", derived.domain)
+        merged.setdefault("scale_min", derived.scale_min)
+        if merged.get("scale_max") is None:
+            merged["scale_max"] = derived.scale_max
+        if merged.get("options") is None and derived.options:
+            merged["options"] = derived.options
+        # A question with no numeric options cannot be scored whatever is asked for.
+        if not derived.scored:
+            merged["scored"] = False
+        expanded.append(merged)
+
+    result = dict(data)
+    result["questions"] = expanded
+    return result
+
+
 def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
     """Rebuild a card from the JSON stored against an assessment."""
     questions = []
@@ -300,6 +339,6 @@ def card_for_assessment(assessment) -> ScoringCard:
 
     stored = configuration.get("card")
     if isinstance(stored, Mapping) and stored.get("questions"):
-        return card_from_dict(stored)
+        return card_from_dict(expand_card(stored, questions))
 
     return legacy_card(questions, configuration)

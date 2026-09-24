@@ -109,6 +109,66 @@ class NumberedSectionTests(SimpleTestCase):
         self.assertIn("do not appear in the order given", str(caught.exception))
 
 
+NUMBERED_WITH_NOISE = """
+Section I - Sleep Quantity
+1. On a typical night, how much sleep do you actually get?
+Do not include time spent awake in bed.
+2. On most nights, how much time do you allow yourself for sleep?
+Section II - Sleep Red Flags
+The following questions are not included in the total score.
+A "Yes" response may indicate the need for additional evaluation.
+3. Has anyone told you that you snore loudly or regularly?
+4. Has anyone observed you stop breathing while sleeping?
+"""
+
+
+class NumberedOnlyTests(SimpleTestCase):
+    """Some documents put instructions among their items."""
+
+    HEADINGS = [("quantity", "Section I"), ("red_flags", "Section II")]
+
+    def test_instructions_are_mistaken_for_questions_without_it(self):
+        # "Do not include time spent awake in bed." reads as a question, and the
+        # real second item is pushed out of the count.
+        questions = extract_by_numbered_sections(NUMBERED_WITH_NOISE, self.HEADINGS, [2, 2])
+        self.assertIn(
+            "Do not include time spent awake in bed.", [q.text for q in questions]
+        )
+
+    def test_numbered_only_collects_the_real_items(self):
+        questions = extract_by_numbered_sections(
+            NUMBERED_WITH_NOISE, self.HEADINGS, [2, 2], numbered_only=True
+        )
+        self.assertEqual(
+            [strip_leading_number(q.text)[:20] for q in questions],
+            ["On a typical night, ", "On most nights, how ",
+             "Has anyone told you ", "Has anyone observed "],
+        )
+
+    def test_it_still_refuses_when_a_section_is_short(self):
+        with self.assertRaises(DocumentError):
+            extract_by_numbered_sections(
+                NUMBERED_WITH_NOISE, self.HEADINGS, [3, 2], numbered_only=True
+            )
+
+
+class VaryingSectionSizeTests(SimpleTestCase):
+    def test_each_section_may_hold_a_different_number(self):
+        questions = extract_by_numbered_sections(
+            NUMBERED_WITH_NOISE, [("quantity", "Section I"), ("red_flags", "Section II")],
+            [2, 2], numbered_only=True,
+        )
+        self.assertEqual([q.section for q in questions],
+                         ["quantity", "quantity", "red_flags", "red_flags"])
+
+    def test_a_mismatched_number_of_counts_is_refused(self):
+        with self.assertRaises(DocumentError) as caught:
+            extract_by_numbered_sections(
+                NUMBERED_WITH_NOISE, [("quantity", "Section I")], [2, 2]
+            )
+        self.assertIn("1 sections were given but 2 counts", str(caught.exception))
+
+
 class TextTidyingTests(SimpleTestCase):
     def test_removes_a_leading_number(self):
         self.assertEqual(strip_leading_number("12. Forgets instructions."), "Forgets instructions.")

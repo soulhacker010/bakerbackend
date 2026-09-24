@@ -35,13 +35,21 @@ _COUNTED_HEADING = re.compile(
     re.IGNORECASE,
 )
 
-# Lines that are never questions.
+# Lines that are never questions. Several documents put a description, a
+# "Questions (Score 1-5 each):" lead-in, and a justification prompt in among the
+# items, and every one of those would otherwise read as a question.
 _SKIP = re.compile(
     r"^(scoring|instructions?|rating scale|administration|clinical notes|"
     r"interpretation|total score|subscale scores|purpose|time frame|"
-    r"respondent|completion time|items)\b",
+    r"respondent|completion time|items|questions? \(|justification:|"
+    r"actionable improvement:|answer yes or no|score:|domain score|"
+    r"evaluate your|assess your|reflect on)\b",
     re.IGNORECASE,
 )
+
+# Answer options, which sit beneath their question:
+#   "A. More than 7 hours - 0 points"   "* 0 - None"   "Yes"   "No"
+_OPTION = re.compile(r"^([A-Z]\.\s|[☐•]\s|Yes$|No$)")
 
 
 def _lines(text: str) -> List[str]:
@@ -56,7 +64,7 @@ def _looks_like_a_question(line: str) -> bool:
     # Answer options carry their own value in brackets or after a dash.
     if re.match(r"^\d+\s*[-–=]\s*\S", line):
         return False
-    if re.match(r"^[☐•]\s", line):
+    if _OPTION.match(line):
         return False
     return len(line) > 12
 
@@ -114,14 +122,35 @@ def extract_by_counted_headings(text: str, expected: Sequence[tuple]) -> List[Ex
 def extract_by_numbered_sections(
     text: str,
     headings: Sequence[tuple],
-    per_section: int,
+    per_section,
+    numbered_only: bool = False,
 ) -> List[ExtractedQuestion]:
     """For documents with named section headings and a fixed number of items each.
 
     ``headings`` is ``(section key, heading text)`` in document order. Used where
     the heading does not state a count, so the count comes from the instrument's
     own scoring section instead and is checked per section.
+
+    ``per_section`` is a single number where every section holds the same many, or
+    one number per section where they differ, as the Sleep & Recovery screener's
+    sections do.
+
+    ``numbered_only`` restricts collection to lines that begin with an item
+    number. Some documents put instructions among their items — "Do not include
+    time spent awake in bed", "The following questions are not included in the
+    total score" — and without this those read as questions and push the real
+    ones out of the count. It is opt-in per document rather than a guess, because
+    other instruments do not number their items at all.
     """
+    counts = (
+        [per_section] * len(headings)
+        if isinstance(per_section, int)
+        else list(per_section)
+    )
+    if len(counts) != len(headings):
+        raise DocumentError(
+            f"{len(headings)} sections were given but {len(counts)} counts."
+        )
     lines = _lines(text)
     positions: List[tuple] = []
     for key, heading in headings:
@@ -141,13 +170,17 @@ def extract_by_numbered_sections(
     number = 0
     for order, (key, index) in enumerate(positions):
         stop = positions[order + 1][1] if order + 1 < len(positions) else len(lines)
-        collected = [
+        wanted = counts[order]
+        candidates = [
             line for line in lines[index + 1 : stop] if _looks_like_a_question(line)
-        ][:per_section]
+        ]
+        if numbered_only:
+            candidates = [line for line in candidates if re.match(r"^\d+\.\s", line)]
+        collected = candidates[:wanted]
 
-        if len(collected) != per_section:
+        if len(collected) != wanted:
             raise DocumentError(
-                f"Section {key!r} should hold {per_section} questions but "
+                f"Section {key!r} should hold {wanted} questions but "
                 f"{len(collected)} could be read from the document."
             )
         for entry in collected:

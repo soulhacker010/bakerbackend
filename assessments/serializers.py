@@ -21,7 +21,10 @@ from .models import (
     RespondentInviteSchedule,
     RespondentInviteScheduleRun,
 )
+from .scoring.card import CardError
+from .scoring.loader import card_from_dict
 from .scoring.service import has_card, score_response
+from .scoring.validation import ERROR, validate_card
 
 
 logger = logging.getLogger(__name__)
@@ -194,7 +197,72 @@ class AssessmentSerializer(serializers.ModelSerializer):
             has_questions = False
         if status == Assessment.Status.PUBLISHED and not has_questions:
             raise serializers.ValidationError("Published assessments must include questions.")
+        self._validate_scoring_card(attrs)
         return attrs
+
+    def _validate_scoring_card(self, attrs) -> None:
+        """Refuse a scoring card that cannot produce a usable result.
+
+        Three assessments went live with ranges that do not cover the scores their
+        questions can reach, so part of every result came back with no
+        interpretation attached. Nobody noticed, because a missing interpretation
+        looks like a quiet score rather than an error. Catching it here puts the
+        problem in front of the person writing it.
+        """
+        scoring = attrs.get("scoring")
+        if not isinstance(scoring, dict):
+            return
+        configuration = scoring.get("configuration") or {}
+        if not isinstance(configuration, dict):
+            return
+        card_data = configuration.get("card")
+        if not isinstance(card_data, dict) or not card_data.get("questions"):
+            return
+
+        try:
+            card = card_from_dict(card_data)
+        except (CardError, KeyError, TypeError, ValueError) as exc:
+            raise serializers.ValidationError({"scoring": [f"Scoring card is malformed: {exc}"]})
+
+        self._check_card_covers_the_questions(attrs, card)
+
+        problems = [p for p in validate_card(card) if p.severity == ERROR]
+        if problems:
+            raise serializers.ValidationError({
+                "scoring": [f"{p.score_id}: {p.message}" for p in problems]
+            })
+
+    def _check_card_covers_the_questions(self, attrs, card) -> None:
+        """Every question scored exactly once, in both directions.
+
+        A question missing from the card would silently never count towards
+        anything, which is the same failure as the unscored items that already
+        reach totals today. Leaving one out has to be deliberate, which is what
+        ``scored`` is for.
+        """
+        supplied = attrs.get("questions")
+        if supplied is not None:
+            identifiers = {q.get("identifier") for q in supplied if q.get("identifier")}
+        elif self.instance is not None:
+            identifiers = set(self.instance.questions.values_list("identifier", flat=True))
+        else:
+            return
+
+        on_card = {rule.identifier for rule in card.questions}
+
+        unknown = sorted(on_card - identifiers)
+        if unknown:
+            raise serializers.ValidationError({"scoring": [
+                "Scoring card refers to questions this assessment does not have: "
+                + ", ".join(unknown)
+            ]})
+
+        missing = sorted(identifiers - on_card)
+        if missing:
+            raise serializers.ValidationError({"scoring": [
+                "These questions are not on the scoring card, so they would never "
+                "count towards a score: " + ", ".join(missing)
+            ]})
 
     def create(self, validated_data):
         tags = validated_data.pop("tags", [])

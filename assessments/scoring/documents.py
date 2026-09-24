@@ -216,3 +216,38 @@ def as_question_payload(
         }
         for question in questions
     ]
+
+
+# "A. More than 7 hours - 0 points"  /  "B. 6-7 hours - 1 point"
+_LETTERED_OPTION = re.compile(
+    r"^[A-Z]\.\s*(?P<label>.+?)\s*[-\u2013\u2014]\s*(?P<value>-?\d+(?:\.\d+)?)\s*points?\s*$",
+    re.IGNORECASE,
+)
+
+
+def extract_lettered_options(text: str) -> Dict[int, List[Dict]]:
+    """Answer options that state their own score, keyed by question number.
+
+    The Sleep & Recovery screener writes them as "B. 6-7 hours - 1 point". The
+    label carries numbers of its own, so the value cannot be read out of the text
+    and is kept in its own field instead.
+
+    Options are attached to the most recent numbered question, which is how the
+    document lays them out.
+    """
+    options: Dict[int, List[Dict]] = {}
+    current: int = 0
+
+    for line in _lines(text):
+        numbered = re.match(r"^(\d+)\.\s", line)
+        if numbered:
+            current = int(numbered.group(1))
+            continue
+        match = _LETTERED_OPTION.match(line)
+        if match and current:
+            options.setdefault(current, []).append({
+                "value": float(match.group("value")),
+                "label": match.group("label").strip(),
+            })
+
+    return options

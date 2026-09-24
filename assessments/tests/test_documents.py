@@ -12,6 +12,7 @@ from django.test import SimpleTestCase
 from assessments.scoring.documents import (
     DocumentError,
     as_question_payload,
+    extract_lettered_options,
     extract_by_counted_headings,
     extract_by_numbered_sections,
     strip_leading_number,
@@ -201,3 +202,52 @@ class PayloadTests(SimpleTestCase):
         payload = as_question_payload(extract_by_counted_headings(COUNTED, LAYOUT), self.OPTIONS)
         self.assertEqual([entry["order"] for entry in payload], [1, 2, 3, 4, 5])
         self.assertEqual([entry["identifier"] for entry in payload], [f"q{i}" for i in range(1, 6)])
+
+
+LETTERED = """
+Section I - Sleep Quantity
+1. On a typical night, approximately how much sleep do you actually get?
+Do not include time spent awake in bed.
+A. More than 7 hours - 0 points
+B. 6-7 hours - 1 point
+C. 5-6 hours - 2 points
+D. Less than 5 hours - 3 points
+2. On most nights, how much time do you allow yourself for sleep?
+A. 8 or more hours - 0 points
+B. Less than 6 hours - 3 points
+Section VI - Sleep Red Flags
+Answer Yes or No.
+16. Has anyone told you that you snore loudly or regularly?
+Yes
+No
+"""
+
+
+class LetteredOptionTests(SimpleTestCase):
+    """Options whose text contains numbers of its own."""
+
+    def test_reads_the_value_from_the_points_rather_than_the_label(self):
+        options = extract_lettered_options(LETTERED)
+        self.assertEqual(options[1][1], {"value": 1.0, "label": "6-7 hours"})
+
+    def test_a_label_full_of_numbers_keeps_the_right_score(self):
+        # "6-7 hours - 1 point" holds three numbers; only the points count.
+        options = extract_lettered_options(LETTERED)
+        self.assertEqual([entry["value"] for entry in options[1]], [0.0, 1.0, 2.0, 3.0])
+        self.assertEqual(
+            [entry["label"] for entry in options[1]],
+            ["More than 7 hours", "6-7 hours", "5-6 hours", "Less than 5 hours"],
+        )
+
+    def test_options_attach_to_the_question_above_them(self):
+        options = extract_lettered_options(LETTERED)
+        self.assertEqual(len(options[1]), 4)
+        self.assertEqual(len(options[2]), 2)
+        self.assertEqual(options[2][1]["label"], "Less than 6 hours")
+
+    def test_questions_without_lettered_options_get_none(self):
+        # The yes/no red flags are not scored and carry no point values.
+        self.assertNotIn(16, extract_lettered_options(LETTERED))
+
+    def test_an_empty_document_yields_nothing(self):
+        self.assertEqual(extract_lettered_options(""), {})

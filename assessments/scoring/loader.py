@@ -57,20 +57,38 @@ def parse_option_value(option: Any) -> Optional[float]:
     return float(found[0])
 
 
+def option_label(option: Any) -> str:
+    """The text a respondent sees and submits."""
+    if isinstance(option, Mapping):
+        return str(option.get("label", ""))
+    return str(option)
+
+
 def option_map(options: Sequence[Any]) -> Dict[str, float]:
     """Every way an answer might arrive, mapped to the number it is worth.
 
     Respondents submit the option text, not an index, so the text is the key.
     The bare number is accepted too, for clients that send the value directly.
+
+    An option may be given as ``{"value": 1, "label": "6-7 hours"}`` where the
+    label itself contains numbers. The Sleep & Recovery screener needs that: an
+    answer reading "6-7 hours - 1 point" has three numbers in it and cannot be
+    read as a plain string without guessing which one is the score.
     """
     mapping: Dict[str, float] = {}
     for option in options or ():
         value = parse_option_value(option)
         if value is None:
             continue
-        label = option if isinstance(option, str) else str(option)
+        label = option_label(option)
         mapping[label.strip()] = value
         mapping[label.strip().lower()] = value
+        # The whole displayed line, for clients that submit it verbatim.
+        if isinstance(option, Mapping):
+            shown = str(option.get("display") or "").strip()
+            if shown:
+                mapping[shown] = value
+                mapping[shown.lower()] = value
         # "2" and "2.0" both resolve.
         mapping[str(value)] = value
         if value == int(value):

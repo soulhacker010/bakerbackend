@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .card import (
     AVERAGE,
+    CLINICAL,
     SUM,
     THRESHOLD_COUNT,
     Band,
@@ -277,6 +278,7 @@ def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
         scores=scores,
         flags=flags,
         standing_notice=str(data.get("standing_notice") or ""),
+        report_style=str(data.get("report_style") or CLINICAL),
         primary_score=data.get("primary_score"),
     )
 
@@ -341,6 +343,7 @@ def card_to_dict(card: ScoringCard) -> Dict[str, Any]:
             for f in card.flags
         ],
         "standing_notice": card.standing_notice,
+        "report_style": card.report_style,
         "primary_score": card.primary_score,
     }
 

@@ -23,7 +23,7 @@ from .models import (
     RespondentInviteScheduleRun,
 )
 from .scoring.card import CardError
-from .scoring.loader import card_from_dict, expand_card
+from .scoring.loader import card_from_dict, expand_card, legacy_card
 from .scoring.service import has_card, score_response
 from .scoring.validation import ERROR, validate_card
 
@@ -218,6 +218,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
             return
         card_data = configuration.get("card")
         if not isinstance(card_data, dict) or not card_data.get("questions"):
+            self._validate_plain_bands(attrs, configuration)
             return
 
         try:
@@ -233,6 +234,42 @@ class AssessmentSerializer(serializers.ModelSerializer):
         if problems:
             raise serializers.ValidationError({
                 "scoring": [f"{p.score_id}: {p.message}" for p in problems]
+            })
+
+    def _validate_plain_bands(self, attrs, configuration) -> None:
+        """Hold an assessment without a card to the same standard as one with.
+
+        Everything not yet on a scoring card is a single total against a plain
+        list of ranges, and until now that list was never checked. Two of them
+        were wrong in ways nobody could see from the editor: one had ranges
+        written for a section applied to a total five times its size, so four
+        fifths of the scale returned no interpretation at all, and another had
+        two ranges meeting on the same number, so a score landing exactly there
+        silently took whichever was listed first.
+
+        The same checks already exist for cards. Rather than repeat them, the
+        legacy configuration is expressed as the one-score card it is and run
+        through those.
+        """
+        bands = configuration.get("bands")
+        if not isinstance(bands, list) or not bands:
+            return
+
+        questions = self._questions_for_card(attrs)
+        if not questions:
+            return
+
+        try:
+            card = legacy_card(questions, configuration)
+        except (CardError, KeyError, TypeError, ValueError):
+            # A malformed range list is reported by the field serialiser; this
+            # check is about ranges that parse but do not add up.
+            return
+
+        problems = [p for p in validate_card(card) if p.severity == ERROR]
+        if problems:
+            raise serializers.ValidationError({
+                "scoring": [f"Interpretation ranges: {p.message}" for p in problems]
             })
 
     def _questions_for_card(self, attrs) -> list:
@@ -357,6 +394,22 @@ class AssessmentSerializer(serializers.ModelSerializer):
             question_id = payload.get("id")
             existing_question = existing_by_id.get(question_id) if question_id else None
 
+            # Match on the identifier before working one out, not after. A payload
+            # that omits the database id — which the editor does — otherwise looks
+            # like a new question whose identifier is already taken, and gets
+            # renamed with a "-2" on every save. Live questions carry up to eight
+            # of those, and every response recorded under an earlier name no longer
+            # points at any question that exists.
+            if existing_question is None:
+                candidate = payload.get("identifier")
+                if candidate:
+                    matched = existing_by_identifier.get(candidate)
+                    # Only if nothing earlier in this same save already claimed it.
+                    # Two payload entries naming one identifier are two questions,
+                    # and the second still needs a name of its own.
+                    if matched is not None and matched.id not in seen_ids:
+                        existing_question = matched
+
             identifier = self._ensure_unique_identifier(
                 candidate=payload.get("identifier"),
                 text=payload.get("text"),
@@ -364,9 +417,6 @@ class AssessmentSerializer(serializers.ModelSerializer):
                 current_identifier=getattr(existing_question, "identifier", None),
                 used_identifiers=used_identifiers,
             )
-
-            if not existing_question and identifier in existing_by_identifier:
-                existing_question = existing_by_identifier[identifier]
 
             config_payload = payload.get("config") or {}
             if not isinstance(config_payload, dict):

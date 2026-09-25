@@ -63,3 +63,61 @@ def score_response(assessment, answers: Mapping[str, Any]) -> Tuple[Dict[str, An
     card = card_for_assessment(assessment)
     result = score_assessment(card, answers)
     return build_payload(card, result)
+
+
+# The audiences a flag may be written for. A flag says who it is for; nothing
+# else in a result does, which is why the rest is handled by removal below.
+_PATIENT_AUDIENCES = {"patient", "both"}
+
+
+def for_respondent(data: Mapping[str, Any]) -> Dict[str, Any]:
+    """A submitted response as the person who answered it may receive it.
+
+    The dashboard chooses not to render clinician-only warnings to a respondent,
+    but choosing not to render something is not the same as not sending it. The
+    whole result, warnings included, was being returned to the respondent's
+    browser, where the text sits in the response body whatever the page does with
+    it. On the perinatal screeners that text is a clinical directive about
+    suicide risk, addressed to somebody else and read in the worst possible
+    circumstances.
+
+    So the server removes it rather than trusting the page to hide it:
+
+    * warnings not addressed to the respondent are dropped outright;
+    * ``highlights`` goes entirely. It is a clinician's summary and no
+      respondent-facing screen renders it;
+    * every ``interpretation`` goes. These are the range descriptions, and they
+      are written as instructions to a clinician about a patient: "Urgent
+      referral to a psychiatrist. Screen for suicidal ideation." Read by the
+      person who just answered, alone, with a Finish button underneath, that is
+      the same failure as sending them the warnings — it simply lives in a
+      different field.
+
+    Scores, maximums and range labels are kept. "Depression 11 / 15, High" is the
+    respondent's own result and is theirs to see. What the range means clinically,
+    and what should be done about it, is a conversation with their clinician.
+    """
+    out = {key: value for key, value in data.items() if key != "highlights"}
+
+    score = out.get("score")
+    if isinstance(score, Mapping):
+        trimmed = dict(score)
+        flags = trimmed.get("flags")
+        if isinstance(flags, list):
+            trimmed["flags"] = [
+                flag for flag in flags
+                if isinstance(flag, Mapping)
+                and str(flag.get("audience", "clinician")) in _PATIENT_AUDIENCES
+            ]
+
+        trimmed.pop("interpretation", None)
+        scores = trimmed.get("scores")
+        if isinstance(scores, list):
+            trimmed["scores"] = [
+                {k: v for k, v in entry.items() if k != "interpretation"}
+                if isinstance(entry, Mapping) else entry
+                for entry in scores
+            ]
+        out["score"] = trimmed
+
+    return out

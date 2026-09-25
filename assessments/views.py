@@ -29,6 +29,7 @@ from .models import (
     RespondentInviteScheduleRun,
 )
 from .permissions import IsAdminOrReadOnly
+from .scoring.service import for_respondent
 from .serializers import (
     AssessmentCategorySerializer,
     AssessmentResponseSerializer,
@@ -858,5 +859,6 @@ class RespondentAssessmentResponseView(APIView):
             user=None,
         )
 
-        response_data = AssessmentResponseSerializer(instance).data
+        # The respondent gets their own result, not the clinician's copy of it.
+        response_data = for_respondent(AssessmentResponseSerializer(instance).data)
         return Response(response_data, status=status.HTTP_201_CREATED)

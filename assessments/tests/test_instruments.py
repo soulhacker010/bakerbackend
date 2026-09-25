@@ -153,13 +153,36 @@ class CageAidTests(SimpleTestCase):
         score = result.score("total")
         self.assertEqual(score.value, 2)
         self.assertEqual(score.band_id, "positive")
-        self.assertEqual([f.id for f in result.flags], ["cage-positive"])
+        self.assertIn("cage-positive", [f.id for f in result.flags])
 
-    def test_one_positive_is_not(self):
+    def test_one_positive_is_not_a_positive_screen(self):
         result = score_assessment(self.card, self.answers(1, 0, 0, 0))
         self.assertEqual(result.score("total").value, 1)
-        self.assertEqual(result.score("total").band_id, "negative")
+        self.assertNotEqual(result.score("total").band_id, "positive")
+        self.assertNotIn("cage-positive", [f.id for f in result.flags])
+
+    def test_one_positive_still_says_to_seek_further_evaluation(self):
+        """The instrument document states two thresholds, not one.
+
+            "A total score of two or greater is considered clinically significant."
+            "If score is one or higher, seek further evaluation."
+
+        Reporting only the higher one dropped a direction stated plainly.
+        """
+        result = score_assessment(self.card, self.answers(1, 0, 0, 0))
+        self.assertIn("cage-seek-evaluation", [f.id for f in result.flags])
+
+    def test_no_positives_says_nothing(self):
+        result = score_assessment(self.card, self.answers(0, 0, 0, 0))
+        self.assertEqual(result.score("total").value, 0)
         self.assertEqual(result.flags, [])
+
+    def test_a_positive_screen_carries_both_directions(self):
+        result = score_assessment(self.card, self.answers(1, 1, 0, 0))
+        self.assertEqual(
+            sorted(f.id for f in result.flags),
+            ["cage-positive", "cage-seek-evaluation"],
+        )
 
     def test_the_substance_question_never_reaches_the_total(self):
         by_alcohol = score_assessment(self.card, self.answers(1, 1, 1, 1, substance="Alcohol"))

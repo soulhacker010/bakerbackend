@@ -186,6 +186,13 @@ SUM = "sum"
 AVERAGE = "average"
 THRESHOLD_COUNT = "threshold_count"
 
+# How a result is written out. These are the client's own three categories,
+# taken from the Report Type column of the 2026 assessment spreadsheet.
+CLINICAL = "clinical"            # a patient-file report: warnings, sections, bands
+ORGANISATIONAL = "organisational"  # a workplace report, where a high score is a good one
+BRIEF = "brief"                  # a short screen with one outcome and a next step
+REPORT_STYLES = frozenset({CLINICAL, ORGANISATIONAL, BRIEF})
+
 EXCLUDE = "exclude"      # N/A leaves the calculation entirely, shrinking the denominator
 AS_ZERO = "as_zero"      # N/A counts as zero
 
@@ -321,8 +328,19 @@ class ScoringCard:
     # Printed on every report for this instrument, e.g. the Sleep & Recovery and
     # Return to Play statements that their cut-offs are provisional.
     standing_notice: str = ""
+    # How the result is written out. The client's own spreadsheet sorts every
+    # assessment into one of these, and the distinction matters: the Executive
+    # Self-Assessment is a workplace tool where a high score is a good one, and
+    # reporting it in clinical language would be both wrong and unwelcome.
+    report_style: str = CLINICAL
 
     def __post_init__(self) -> None:
+        if self.report_style not in REPORT_STYLES:
+            raise CardError(
+                f"Unknown report style {self.report_style!r}; "
+                f"expected one of {', '.join(sorted(REPORT_STYLES))}."
+            )
+
         seen = set()
         for question in self.questions:
             if question.identifier in seen:

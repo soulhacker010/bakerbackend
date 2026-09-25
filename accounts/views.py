@@ -11,12 +11,10 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .email_feedback import FeedbackEmail, FeedbackEmailError, send_feedback_email
 from .email_password_reset import PasswordResetEmail, PasswordResetEmailError, send_password_reset_email
 from .email_two_factor import TwoFactorEmail, TwoFactorEmailError, send_two_factor_email
 from .models import PasswordResetToken, TwoFactorChallenge, User
 from .serializers import (
-    FeedbackSubmissionSerializer,
     LoginSerializer,
     PasswordResetCompleteSerializer,
     PasswordResetRequestSerializer,
@@ -335,36 +333,6 @@ class ProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
-
-
-class FeedbackSubmissionView(APIView):
-    permission_classes = (permissions.IsAuthenticated,)
-
-    def post(self, request, *args, **kwargs):
-        serializer = FeedbackSubmissionSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        feedback_type = serializer.validated_data["type"]
-        message = serializer.validated_data["message"]
-        user = request.user
-
-        author_name = f"{user.first_name} {user.last_name}".strip()
-        if not author_name:
-            author_name = user.email
-
-        email_payload = FeedbackEmail(
-            author_email=user.email,
-            author_name=author_name,
-            feedback_type=feedback_type,
-            message=message,
-        )
-
-        try:
-            send_feedback_email(email_payload)
-        except FeedbackEmailError as exc:
-            return Response({"detail": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-
-        return Response({"detail": "Feedback submitted. Thank you!"}, status=status.HTTP_202_ACCEPTED)
 
 
 class TwoFactorVerifyView(APIView):

@@ -81,10 +81,45 @@ class SaveGuardTests(TestCase):
         assessment = serializer.save()
         self.assertEqual(assessment.questions.count(), self.QUESTION_COUNT)
 
-    def test_an_assessment_without_a_card_is_unaffected(self):
+    def test_an_assessment_without_a_card_saves_when_its_ranges_are_sound(self):
         serializer = AssessmentSerializer(data=self.payload(with_card=False, bands=[
+            {"id": "low", "label": "Low", "min": 0, "max": 15},
+            {"id": "high", "label": "High", "min": 16, "max": 30},
+        ]))
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+
+    def test_an_assessment_without_a_card_is_held_to_the_same_standard(self):
+        """The hole this closes.
+
+        Everything not yet on a card is one total against a plain list of ranges,
+        and that list used to be saved unchecked. Two live assessments were wrong
+        in exactly this way, and neither was visible from the editor.
+        """
+        message = self.errors_for(self.payload(with_card=False, bands=[
             {"id": "anything", "label": "Anything", "min": 0, "max": 5},
         ]))
+        self.assertIn("scores can reach 30", message)
+
+    def test_a_gap_in_a_plain_range_list_is_refused(self):
+        message = self.errors_for(self.payload(with_card=False, bands=[
+            {"id": "low", "label": "Low", "min": 0, "max": 10},
+            {"id": "high", "label": "High", "min": 18, "max": 30},
+        ]))
+        self.assertIn("nothing covers 10 to 18", message)
+
+    def test_two_plain_ranges_meeting_on_the_same_number_are_refused(self):
+        # The ABA assessment: 0-100 listed before 100-149, so a score of exactly
+        # 100 matched the first and silently read as the lower level.
+        message = self.errors_for(self.payload(with_card=False, bands=[
+            {"id": "low", "label": "Low", "min": 0, "max": 16},
+            {"id": "high", "label": "High", "min": 16, "max": 30},
+        ]))
+        self.assertIn("overlap at 16", message)
+
+    def test_an_assessment_with_no_ranges_at_all_still_saves(self):
+        # Legitimate: an assessment may collect answers before anyone has decided
+        # what the numbers mean.
+        serializer = AssessmentSerializer(data=self.payload(with_card=False, bands=[]))
         self.assertTrue(serializer.is_valid(), serializer.errors)
 
     def test_a_gap_between_bands_is_refused(self):

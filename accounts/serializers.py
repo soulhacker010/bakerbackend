@@ -80,17 +80,6 @@ class LoginSerializer(serializers.Serializer):
         return attrs
 
 
-class FeedbackSubmissionSerializer(serializers.Serializer):
-    type = serializers.ChoiceField(choices=("general", "error", "feature", "other"))
-    message = serializers.CharField(max_length=4000, trim_whitespace=True)
-
-    def validate_message(self, value: str) -> str:
-        cleaned = value.strip()
-        if not cleaned:
-            raise serializers.ValidationError("Message cannot be blank.")
-        return cleaned
-
-
 class TwoFactorVerifySerializer(serializers.Serializer):
     challenge_id = serializers.UUIDField()
     code = serializers.CharField(max_length=10, trim_whitespace=True)

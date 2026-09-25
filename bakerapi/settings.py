@@ -310,7 +310,6 @@ AUTH_USER_MODEL = 'accounts.User'
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '').strip()
 RESEND_FROM_EMAIL = os.environ.get('RESEND_FROM_EMAIL', '').strip()
 RESEND_REPLY_TO = os.environ.get('RESEND_REPLY_TO', '').strip()
-FEEDBACK_TO_EMAIL = os.environ.get('FEEDBACK_TO_EMAIL', '').strip()
 
 
 # Two-factor authentication defaults

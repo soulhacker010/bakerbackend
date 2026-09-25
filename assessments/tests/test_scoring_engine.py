@@ -666,3 +666,49 @@ class CardValidationTests(SimpleTestCase):
                 scores=[ScoreRule(id="total", label="Total", domain="d")],
                 flags=[FlagRule(id="f", message="m", questions=["nope"], value=1)],
             )
+
+
+class ReportStyleTests(SimpleTestCase):
+    """How a result says it should be written out.
+
+    The client's spreadsheet sorts every assessment into one of three report
+    types. The distinction is not cosmetic: the Executive Self-Assessment is a
+    workplace tool where a high score is a good one, so reporting it in the
+    clinical layout would state the opposite of what the score means.
+    """
+
+    def card(self, style=None):
+        kwargs = {"report_style": style} if style else {}
+        return ScoringCard(
+            questions=(QuestionRule("q1", "d", scale_min=0, scale_max=3),),
+            scores=(ScoreRule(id="total", label="Total", domain="d"),),
+            **kwargs,
+        )
+
+    def test_a_card_is_clinical_unless_it_says_otherwise(self):
+        self.assertEqual(self.card().report_style, "clinical")
+
+    def test_the_style_reaches_the_result(self):
+        result = score_assessment(self.card("brief"), {"q1": 2})
+        self.assertEqual(result.style, "brief")
+
+    def test_the_style_reaches_the_stored_payload(self):
+        payload = score_assessment(self.card("organisational"), {"q1": 2}).as_dict()
+        self.assertEqual(payload["style"], "organisational")
+
+    def test_the_clinical_default_is_not_written_into_every_result(self):
+        # Every result that exists already is clinical; writing the word into all
+        # of them would change millions of stored payloads to say nothing new.
+        payload = score_assessment(self.card(), {"q1": 2}).as_dict()
+        self.assertNotIn("style", payload)
+
+    def test_an_unknown_style_is_refused_when_the_card_is_built(self):
+        with self.assertRaises(CardError):
+            ScoringCard(questions=(QuestionRule("q1", "d"),), report_style="friendly")
+
+    def test_the_refusal_names_the_styles_that_are_allowed(self):
+        with self.assertRaises(CardError) as caught:
+            ScoringCard(questions=(QuestionRule("q1", "d"),), report_style="friendly")
+        message = str(caught.exception)
+        for style in ("brief", "clinical", "organisational"):
+            self.assertIn(style, message)

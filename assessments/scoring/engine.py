@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence
 from .card import (
     AS_ZERO,
     AVERAGE,
+    CLINICAL,
     EXCLUDE,
     SUM,
     THRESHOLD_COUNT,
@@ -102,6 +103,9 @@ class ScoringResult:
     scores: List[ScoreResult] = field(default_factory=list)
     flags: List[FlagResult] = field(default_factory=list)
     notice: str = ""
+    # Carried into the stored result so a report can be written out the way it was
+    # meant to be read, without having to fetch the assessment it came from.
+    style: str = CLINICAL
 
     def score(self, score_id: str) -> Optional[ScoreResult]:
         for result in self.scores:
@@ -117,6 +121,8 @@ class ScoringResult:
         }
         if self.notice:
             payload["notice"] = self.notice
+        if self.style and self.style != CLINICAL:
+            payload["style"] = self.style
         return payload
 
 
@@ -340,4 +346,5 @@ def score_assessment(card: ScoringCard, answers: Mapping[str, Any]) -> ScoringRe
         scores=scores,
         flags=_flags(card, answers, computed),
         notice=card.standing_notice,
+        style=card.report_style,
     )

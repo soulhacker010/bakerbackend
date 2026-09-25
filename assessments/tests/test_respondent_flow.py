@@ -14,7 +14,7 @@ from rest_framework import status
 
 from bakerapi.test_utils import ThrottledAPITestCase
 
-from assessments.models import Assessment, AssessmentQuestion, AssessmentResponse
+from assessments.models import Assessment, AssessmentQuestion, AssessmentResponse, AssessmentScoringConfig
 from clients.models import Client
 
 
@@ -187,3 +187,72 @@ class RespondentEndToEndTests(ThrottledAPITestCase):
         stored = AssessmentResponse.objects.get()
         self.assertEqual(stored.client_id, self.client_record.id)
         self.assertEqual(stored.submitted_by_id, self.clinician.id)
+
+    def test_a_clinician_only_warning_never_reaches_the_respondent(self):
+        """End to end, through the real endpoint.
+
+        The dashboard hides clinician warnings from a respondent. That is a
+        rendering choice; this is about what crosses the wire. The text here is a
+        clinical directive about suicide risk, addressed to somebody else and
+        read, if it leaked, in the worst possible circumstances.
+        """
+        directive = "Endorsement of self-harm requires a same-day safety assessment."
+
+        self.assessment.questions.all().delete()
+        for index, (identifier, text) in enumerate(
+            [("risk", "Thoughts of self-harm"), ("mood", "Low mood")], start=1
+        ):
+            AssessmentQuestion.objects.create(
+                assessment=self.assessment, identifier=identifier, order=index, text=text,
+                response_type=AssessmentQuestion.ResponseType.LIKERT, required=True,
+                config={"options": ["0 - Never", "1 - Sometimes", "2 - Often", "3 - Always"]},
+                domain="risk",
+            )
+
+        AssessmentScoringConfig.objects.update_or_create(
+            assessment=self.assessment,
+            defaults={"method": "sum", "configuration": {"card": {
+                "questions": [
+                    {"identifier": "risk", "domain": "risk"},
+                    {"identifier": "mood", "domain": "risk"},
+                ],
+                "scores": [{"id": "total", "label": "Total", "domain": "risk", "bands": [
+                    {"id": "low", "label": "Low", "min": 0, "max": 3, "description": "Low"},
+                    {"id": "high", "label": "High", "min": 4, "max": 6, "description": "High"},
+                ]}],
+                "flags": [{
+                    "id": "self-harm", "message": directive, "severity": "urgent",
+                    "audience": "clinician", "score_id": "total", "operator": ">=", "value": 1,
+                }],
+                "primary_score": "total",
+            }}},
+        )
+
+        token = self._issue_token()
+        response = self.client.post(
+            reverse("assessments:respondent-link-assessment-response"),
+            data={"token": token, "response": {
+                "assessment_slug": self.assessment.slug,
+                "client_slug": self.client_record.slug,
+                "responses": [
+                    {"question_identifier": "risk", "value": "3 - Always"},
+                    {"question_identifier": "mood", "value": "3 - Always"},
+                ],
+            }},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+        body = response.content.decode()
+        self.assertNotIn(directive, body)
+        self.assertNotIn("highlights", response.json())
+        self.assertEqual(response.json()["score"]["flags"], [])
+
+        # The respondent still gets their own result.
+        self.assertEqual(response.json()["score"]["total"], 6)
+        self.assertEqual(response.json()["score"]["band_label"], "High")
+
+        # And the clinician, reading the same submission, still sees everything.
+        stored = AssessmentResponse.objects.get(pk=response.json()["id"])
+        self.assertIn(directive, str(stored.score))
+        self.assertIn(directive, " ".join(stored.highlights))

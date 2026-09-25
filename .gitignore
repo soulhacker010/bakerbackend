@@ -31,3 +31,6 @@ ENV/
 *.bak
 *.swp
 
+
+# Verity — snapshots of analyzed files (machine state, never commit)
+.verity/.snapshot/

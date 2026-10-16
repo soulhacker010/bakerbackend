@@ -4,7 +4,7 @@ from __future__ import annotations
 import secrets
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Tuple
 
 from django.conf import settings
 from django.core import signing
@@ -37,6 +37,7 @@ class RespondentLinkPayload:
     max_uses: int = 1
     uses: int = 0
     expires_at: Optional[datetime] = None
+    completed: Tuple[str, ...] = ()
 
 
 class RespondentLinkError(Exception):
@@ -242,7 +243,13 @@ def refresh_token_for_client(payload: RespondentLinkPayload, *, client_slug: str
             existing_invite.save(update_fields=["token", "client", "pending_client", "uses"])
             return token
 
-        _create_invite_record(token, refreshed_payload, owner_id=payload.owner_id, client=client)
+        _create_invite_record(
+            token,
+            refreshed_payload,
+            owner_id=payload.owner_id,
+            client=client,
+            max_uses=len(payload.assessments) or None,
+        )
 
     return token
 
@@ -266,8 +273,14 @@ def resolve_link_token(token: str) -> RespondentLinkPayload:
     if invite.is_expired():
         raise RespondentLinkError("This respondent link has expired. Please request a new invitation.")
 
+    completed = tuple(invite.completed_assessments or ())
     if invite.uses >= invite.max_uses:
-        raise RespondentLinkError("This respondent link has already been used.")
+        # Read by the person who answered, usually after doing everything asked
+        # of them. "Already been used" reads as though they did something wrong.
+        raise RespondentLinkError(
+            "You have already completed every assessment in this invitation. "
+            "Thank you - there is nothing more to do."
+        )
 
     return replace(
         payload,
@@ -275,10 +288,11 @@ def resolve_link_token(token: str) -> RespondentLinkPayload:
         max_uses=invite.max_uses,
         uses=invite.uses,
         expires_at=invite.expires_at,
+        completed=completed,
     )
 
 
-def mark_invite_used(token: str) -> None:
+def mark_invite_used(token: str, assessment_slug: Optional[str] = None) -> None:
     with transaction.atomic():
         invite = RespondentInvite.objects.select_for_update().filter(token=token).first()
         if invite is None:
@@ -287,4 +301,16 @@ def mark_invite_used(token: str) -> None:
             return
         invite.uses += 1
         invite.used_at = timezone.now()
-        invite.save(update_fields=["uses", "used_at"])
+        fields = ["uses", "used_at"]
+        if assessment_slug:
+            completed = list(invite.completed_assessments or [])
+            if assessment_slug not in completed:
+                completed.append(assessment_slug)
+            invite.completed_assessments = completed
+            fields.append("completed_assessments")
+        invite.save(update_fields=fields)
+
+
+def is_assessment_completed(token: str, assessment_slug: str) -> bool:
+    invite = RespondentInvite.objects.filter(token=token).only("completed_assessments").first()
+    return bool(invite and assessment_slug in (invite.completed_assessments or []))

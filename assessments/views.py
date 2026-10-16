@@ -566,6 +566,7 @@ class RespondentLinkResolveView(APIView):
             "maxUses": link_payload.max_uses,
             "uses": link_payload.uses,
             "expiresAt": link_payload.expires_at.isoformat() if link_payload.expires_at else None,
+            "completedAssessments": list(link_payload.completed),
             "assessments": assessments,
             "client": client_payload,
         }
@@ -837,6 +838,14 @@ class RespondentAssessmentResponseView(APIView):
         if assessment_slug not in link_payload.assessments:
             return Response({"detail": "This assessment is not part of the invitation."}, status=status.HTTP_403_FORBIDDEN)
 
+        # One submission per assessment. A second would spend a use meant for a
+        # different assessment and leave that one unreachable.
+        if assessment_slug in link_payload.completed:
+            return Response(
+                {"detail": "You have already completed this assessment."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
         client = serializer.validated_data.get("client")
         if link_payload.client_slug:
             if client is None or client.slug != link_payload.client_slug:
@@ -847,7 +856,7 @@ class RespondentAssessmentResponseView(APIView):
 
         instance = serializer.save()
 
-        mark_invite_used(token)
+        mark_invite_used(token, assessment_slug)
 
         # A completed assessment being recorded is a real PHI event, so it belongs
         # in the trail even though nobody is signed in.

@@ -276,6 +276,10 @@ class RespondentInvite(models.Model):
     max_uses = models.PositiveSmallIntegerField(default=1)
     uses = models.PositiveSmallIntegerField(default=0)
     used_at = models.DateTimeField(null=True, blank=True)
+    # Slugs submitted under this invitation. Counting uses alone could not tell a
+    # respondent coming back for the second assessment from one redoing the
+    # first, so the first was shown again and the last was refused.
+    completed_assessments = models.JSONField(default=list, blank=True)
 
     class Meta:
         indexes = (

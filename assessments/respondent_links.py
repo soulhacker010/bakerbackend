@@ -102,7 +102,11 @@ def _validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> Lis
     if missing:
         raise RespondentLinkError(_(f"Unknown assessments: {', '.join(missing)}."))
 
-    return assessments
+    # In the order the clinician chose, which is the order the respondent will
+    # meet them. The query returns database order, and the invitation was being
+    # issued in that order whatever had been selected.
+    position = {slug: index for index, slug in enumerate(slugs)}
+    return sorted(assessments, key=lambda assessment: position[assessment.slug])
 
 
 def _normalise_datetime(value: datetime | None) -> datetime | None:

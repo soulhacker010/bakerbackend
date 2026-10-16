@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 from django.utils import timezone
 from django.utils.text import slugify
 
@@ -295,3 +296,65 @@ class RespondentInvite(models.Model):
 
     def is_expired(self) -> bool:
         return timezone.now() >= self.expires_at
+
+
+class AssessmentBundle(models.Model):
+    """A named set of assessments sent together, such as a screening battery.
+
+    Asked for in the practice's October 2026 update: "Create bundles or
+    batteries where we can put all assessments together and send them out."
+
+    Shared across the practice the way the assessment library is: any clinician
+    may create one and every clinician sees and uses all of them, but only the
+    person who made it, or an administrator, may change or delete it.
+    """
+
+    name = models.CharField(max_length=120)
+    description = models.TextField(blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="assessment_bundles",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    assessments = models.ManyToManyField(
+        Assessment,
+        through="AssessmentBundleItem",
+        related_name="bundles",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ("name",)
+        constraints = (
+            # Two bundles called "Middlesex screening" and "middlesex Screening"
+            # would be told apart by nobody choosing between them.
+            models.UniqueConstraint(
+                Lower("name"),
+                name="assessment_bundle_name_unique_ci",
+            ),
+        )
+
+    def __str__(self) -> str:  # pragma: no cover - display helper
+        return self.name
+
+
+class AssessmentBundleItem(models.Model):
+    """One assessment in a bundle, in the order the respondent will meet it."""
+
+    bundle = models.ForeignKey(AssessmentBundle, related_name="items", on_delete=models.CASCADE)
+    # Deleting an assessment removes it from every bundle rather than leaving a
+    # bundle that names something which no longer exists.
+    assessment = models.ForeignKey(Assessment, related_name="bundle_items", on_delete=models.CASCADE)
+    order = models.PositiveIntegerField()
+
+    class Meta:
+        ordering = ("order", "id")
+        constraints = (
+            models.UniqueConstraint(fields=("bundle", "assessment"), name="assessment_bundle_item_unique"),
+        )
+
+    def __str__(self) -> str:  # pragma: no cover - display helper
+        return f"{self.bundle_id}:{self.order}:{self.assessment_id}"

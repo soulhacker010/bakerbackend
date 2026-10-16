@@ -22,15 +22,17 @@ from notifications.services import create_notification
 from .email_invites import EmailInviteError, InviteContent, build_invite_url, send_assessment_invite_email
 from .models import (
     Assessment,
+    AssessmentBundle,
     AssessmentCategory,
     AssessmentResponse,
     AssessmentTag,
     RespondentInviteSchedule,
     RespondentInviteScheduleRun,
 )
-from .permissions import IsAdminOrReadOnly
+from .permissions import IsAdminOrReadOnly, IsBundleOwnerOrAdmin
 from .scoring.service import for_respondent
 from .serializers import (
+    AssessmentBundleSerializer,
     AssessmentCategorySerializer,
     AssessmentResponseSerializer,
     AssessmentSerializer,
@@ -65,6 +67,21 @@ class AssessmentTagViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return AssessmentTag.objects.all()
+
+
+class AssessmentBundleViewSet(viewsets.ModelViewSet):
+    """Saved sets of assessments, shared across the practice."""
+
+    serializer_class = AssessmentBundleSerializer
+    permission_classes = (permissions.IsAuthenticated, IsBundleOwnerOrAdmin)
+
+    def get_queryset(self):
+        return AssessmentBundle.objects.select_related("created_by").prefetch_related(
+            "items__assessment"
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
 
 
 class AssessmentViewSet(viewsets.ModelViewSet):
@@ -526,6 +543,9 @@ class RespondentLinkResolveView(APIView):
             .filter(Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=link_payload.owner_id))
             .select_related("category")
         )
+        # The invitation's own order, not the database's.
+        position = {slug: index for index, slug in enumerate(link_payload.assessments)}
+        assessments = sorted(assessments, key=lambda assessment: position.get(assessment.slug, len(position)))
         return [
             {
                 "slug": assessment.slug,

@@ -3,7 +3,7 @@ import re
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, List, Optional
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from django.utils.text import slugify
 from rest_framework import serializers
@@ -14,6 +14,8 @@ from notifications.services import create_notifications
 
 from .models import (
     Assessment,
+    AssessmentBundle,
+    AssessmentBundleItem,
     AssessmentCategory,
     AssessmentQuestion,
     AssessmentResponse,
@@ -930,3 +932,140 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
                 continue
 
         return None, None, None
+
+
+class AssessmentBundleSerializer(serializers.ModelSerializer):
+    """A named, ordered set of assessments that a clinician sends in one go.
+
+    Written as a list of assessment slugs, in the order the respondent should
+    meet them. Read back as those assessments, with only the ones the reader may
+    actually send - so a bundle never offers something that would then be
+    refused when the invitation is issued.
+    """
+
+    MAX_ASSESSMENTS = 30
+
+    assessments = serializers.ListField(
+        child=serializers.SlugField(max_length=255),
+        write_only=True,
+        allow_empty=False,
+    )
+
+    class Meta:
+        model = AssessmentBundle
+        fields = ("id", "name", "description", "assessments", "created_at", "updated_at")
+        read_only_fields = ("id", "created_at", "updated_at")
+
+    # ------------------------------------------------------------- validation
+
+    def validate_name(self, value: str) -> str:
+        name = " ".join((value or "").split())
+        if not name:
+            raise serializers.ValidationError("Give the bundle a name.")
+        clash = AssessmentBundle.objects.filter(name__iexact=name)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        if clash.exists():
+            raise serializers.ValidationError(f'There is already a bundle called "{name}".')
+        return name
+
+    def validate_assessments(self, value: List[str]) -> List[Assessment]:
+        if len(value) > self.MAX_ASSESSMENTS:
+            raise serializers.ValidationError(
+                f"A bundle can hold at most {self.MAX_ASSESSMENTS} assessments."
+            )
+
+        seen: set[str] = set()
+        repeated = [slug for slug in value if slug in seen or seen.add(slug)]
+        if repeated:
+            raise serializers.ValidationError(
+                "Each assessment can appear once. Listed twice: " + ", ".join(sorted(set(repeated))) + "."
+            )
+
+        # Published only. Bundles are shared, and a draft is visible to its
+        # author and administrators alone: anyone else choosing the bundle would
+        # have the invitation refused.
+        found = {
+            assessment.slug: assessment
+            for assessment in Assessment.objects.filter(
+                slug__in=value, status=Assessment.Status.PUBLISHED
+            )
+        }
+        missing = [slug for slug in value if slug not in found]
+        if missing:
+            raise serializers.ValidationError(
+                "Only published assessments can go in a bundle. Not available: "
+                + ", ".join(missing) + "."
+            )
+        return [found[slug] for slug in value]
+
+    # ---------------------------------------------------------------- writing
+
+    def _write_items(self, bundle: AssessmentBundle, assessments: List[Assessment]) -> None:
+        bundle.items.all().delete()
+        AssessmentBundleItem.objects.bulk_create(
+            AssessmentBundleItem(bundle=bundle, assessment=assessment, order=index)
+            for index, assessment in enumerate(assessments, start=1)
+        )
+
+    def _name_taken(self, name: str) -> serializers.ValidationError:
+        return serializers.ValidationError({"name": [f'There is already a bundle called "{name}".']})
+
+    def create(self, validated_data: Dict[str, Any]) -> AssessmentBundle:
+        assessments = validated_data.pop("assessments")
+        try:
+            with transaction.atomic():
+                bundle = AssessmentBundle.objects.create(**validated_data)
+                self._write_items(bundle, assessments)
+        except IntegrityError as exc:
+            # Two clinicians naming a bundle in the same moment. The check in
+            # validate_name cannot see the other's unsaved row; the constraint can.
+            raise self._name_taken(validated_data.get("name", "")) from exc
+        return bundle
+
+    def update(self, instance: AssessmentBundle, validated_data: Dict[str, Any]) -> AssessmentBundle:
+        assessments = validated_data.pop("assessments", None)
+        try:
+            with transaction.atomic():
+                for field, value in validated_data.items():
+                    setattr(instance, field, value)
+                instance.save()
+                if assessments is not None:
+                    self._write_items(instance, assessments)
+        except IntegrityError as exc:
+            raise self._name_taken(validated_data.get("name", instance.name)) from exc
+        return instance
+
+    # ---------------------------------------------------------------- reading
+
+    def to_representation(self, instance: AssessmentBundle) -> Dict[str, Any]:
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        is_admin = bool(user and (user.is_staff or user.is_superuser))
+
+        sendable, unavailable = [], 0
+        for item in instance.items.all():
+            assessment = item.assessment
+            # The same rule an invitation is checked against when it is issued.
+            if assessment.status == Assessment.Status.PUBLISHED or (
+                user is not None and assessment.created_by_id == getattr(user, "id", None)
+            ):
+                sendable.append({"slug": assessment.slug, "title": assessment.title})
+            else:
+                unavailable += 1
+
+        creator = instance.created_by
+        data["assessments"] = sendable
+        # An assessment unpublished after the bundle was made. Said out loud, so
+        # a bundle that has quietly shrunk is not sent as though it were whole.
+        data["unavailable_count"] = unavailable
+        data["created_by"] = (
+            (" ".join(filter(None, [creator.first_name, creator.last_name])) or creator.email)
+            if creator else None
+        )
+        data["can_edit"] = bool(
+            user and user.is_authenticated and (is_admin or instance.created_by_id == user.id)
+        )
+        return data
+

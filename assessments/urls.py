@@ -2,6 +2,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework.urls import path
 
 from .views import (
+    AssessmentBundleViewSet,
     AssessmentCategoryViewSet,
     AssessmentResponseViewSet,
     AssessmentTagViewSet,
@@ -24,6 +25,7 @@ router.register(r"assessments", AssessmentViewSet, basename="assessment")
 router.register(r"assessment-categories", AssessmentCategoryViewSet, basename="assessment-category")
 router.register(r"assessment-tags", AssessmentTagViewSet, basename="assessment-tag")
 router.register(r"assessment-responses", AssessmentResponseViewSet, basename="assessment-response")
+router.register(r"assessment-bundles", AssessmentBundleViewSet, basename="assessment-bundle")
 
 urlpatterns = router.urls + [
     path("respondent-links/issue/", RespondentLinkIssueView.as_view(), name="respondent-link-issue"),

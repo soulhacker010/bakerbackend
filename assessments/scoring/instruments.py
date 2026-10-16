@@ -415,7 +415,24 @@ def asrs(questions: Sequence) -> ScoringCard:
     """
     rules = _rules(questions, 18, "ASRS")
     _check_scale(rules, 0, 4, "ASRS")
+    return _asrs_card(rules)
 
+
+def asrs_screener(questions: Sequence) -> ScoringCard:
+    """The six-item ASRS v1.1 Screener: Part A on its own.
+
+    The practice moved to it on 16 October 2026. The 18-item form needs a
+    commercial licence for website use; the six-item screener is free with
+    attribution and may not be modified. Part A is scored exactly as it is in
+    the full form, so a result reads the same on either.
+    """
+    rules = _rules(questions, 6, "ASRS Screener")
+    _check_scale(rules, 0, 4, "ASRS Screener")
+    return _asrs_card(rules)
+
+
+def _asrs_card(rules: Sequence[QuestionRule]) -> ScoringCard:
+    with_part_b = len(rules) > len(ASRS_PART_A_THRESHOLDS)
     prepared: List[QuestionRule] = []
     for index, rule in enumerate(rules, start=1):
         part_a = index in ASRS_PART_A_THRESHOLDS
@@ -453,8 +470,8 @@ def asrs(questions: Sequence) -> ScoringCard:
                 questions=[r.identifier for r in prepared if r.domain == "part_a"],
                 method=THRESHOLD_COUNT, positive_at=ASRS_POSITIVE_AT,
             ),
-            ScoreRule(id="part_b", label="Part B symptoms", domain="part_b"),
-        ],
+        ] + ([ScoreRule(id="part_b", label="Part B symptoms", domain="part_b")]
+             if with_part_b else []),
         flags=[
             FlagRule(
                 id="asrs-total",
@@ -479,9 +496,10 @@ def asrs(questions: Sequence) -> ScoringCard:
             "of 14 stated in this instrument's documentation; the screen counts items "
             "answered at or above their own threshold, which is the WHO rule, and is "
             "positive at four of six. The two can disagree, and where they do the "
-            "profile is worth reading rather than either figure alone. Part B is "
-            "scored separately and carries no stated cut-off. Neither result is a "
-            "diagnosis."
+            "profile is worth reading rather than either figure alone. "
+            + ("Part B is scored separately and carries no stated cut-off. "
+               if with_part_b else "")
+            + "Neither result is a diagnosis."
         ),
     )
 
@@ -662,6 +680,7 @@ BUILDERS = {
     "cage_aid": cage_aid,
     "pcl5": pcl5,
     "asrs": asrs,
+    "asrs_screener": asrs_screener,
     "pc_ptsd_5": pc_ptsd_5,
     "who5": who5,
 }

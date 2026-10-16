@@ -182,11 +182,12 @@ def mental_skills(questions: Sequence) -> ScoringCard:
     not a total, which is why this is the instrument that proves the engine can
     average averages.
 
-    Known problem with the document: its bands run "4.0-5.0", "3.0-3.9" and
-    "below 3.0", leaving nothing covering 3.9 to 4.0. A domain average moves in
-    steps of 0.2 so cannot land there, but the overall index is an average of
-    eight such figures and can: eight domains at 4.0, 4.0, 4.0, 4.0, 4.0, 4.0,
-    3.8, 3.8 average to 3.95. Reproduced as written so the validator reports it.
+    The document's bands run "4.0-5.0", "3.0-3.9" and "below 3.0", leaving
+    nothing covering 3.9 to 4.0. A domain average moves in steps of 0.2 so cannot
+    land there, but the overall index can: eight domains at 4.0, 4.0, 4.0, 4.0,
+    4.0, 4.0, 3.8, 3.8 average to 3.95. The practice answered on 16 October 2026:
+    "Lower band. Anything up until the minimum threshold of the next level stays
+    below." So each band runs up to just short of the next one's minimum.
 
     The document also defines a self-versus-observer discrepancy flag of 1.5
     points or more. That needs the observer module, which is a separate short form
@@ -212,7 +213,7 @@ def mental_skills(questions: Sequence) -> ScoringCard:
     def domain_bands():
         return _bands(
             ("growth", "Priority growth area", 1.0, 2.99, "A priority area for development."),
-            ("developing", "Developing", 3.0, 3.9, "Targeted training recommended."),
+            ("developing", "Developing", 3.0, 3.99, "Targeted training recommended."),
             ("strength", "Strength", 4.0, 5.0, "A strength to maintain and leverage."),
         )
 

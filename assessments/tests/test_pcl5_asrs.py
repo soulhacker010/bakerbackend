@@ -21,6 +21,7 @@ from assessments.scoring.instruments import (
     PCL5_CLUSTERS,
     PCL5_CUTOFF,
     asrs,
+    asrs_screener,
     pcl5,
 )
 from assessments.scoring.validation import ERROR, achievable_range, validate_card
@@ -268,3 +269,53 @@ class AsrsTests(SimpleTestCase):
     def test_part_b_items_are_not_counted_at_all(self):
         by_id = {r.identifier: r for r in self.card.questions}
         self.assertIsNone(by_id["q7"].qualifying_values)
+
+
+class AsrsScreenerTests(SimpleTestCase):
+    """The six-item screener the practice switched to on 16 October 2026."""
+
+    def setUp(self):
+        self.card = asrs_screener(questions(6, ASRS_SCALE))
+        self.full = asrs(questions(18, ASRS_SCALE))
+
+    def answers(self, overrides=None, count=6):
+        payload = {f"q{i}": ASRS_SCALE[0] for i in range(1, count + 1)}
+        for item, value in (overrides or {}).items():
+            payload[f"q{item}"] = ASRS_SCALE[value]
+        return payload
+
+    def test_card_is_sound(self):
+        self.assertEqual([p for p in validate_card(self.card) if p.severity == ERROR], [])
+
+    def test_it_has_no_part_b(self):
+        self.assertEqual([s.id for s in self.card.scores], ["part_a", "part_a_screen"])
+        self.assertNotIn("Part B", self.card.standing_notice)
+
+    def test_it_scores_part_a_exactly_as_the_full_form_does(self):
+        cases = [
+            {},
+            {1: 2, 2: 2, 3: 2},
+            {1: 2, 2: 2, 3: 2, 4: 3},
+            {4: 2, 5: 2, 6: 2},
+            {1: 4, 2: 4, 3: 4, 4: 1, 5: 1, 6: 1},
+            {i: 4 for i in range(1, 7)},
+        ]
+        for case in cases:
+            short = score_assessment(self.card, self.answers(case))
+            long = score_assessment(self.full, self.answers(case, count=18))
+            for score_id in ("part_a", "part_a_screen"):
+                self.assertEqual(short.score(score_id).value, long.score(score_id).value, case)
+            self.assertEqual(sorted(f.id for f in short.flags), sorted(f.id for f in long.flags), case)
+
+    def test_four_counted_items_is_a_positive_screen(self):
+        result = score_assessment(self.card, self.answers({1: 2, 2: 2, 3: 2, 4: 3}))
+        self.assertTrue(result.score("part_a_screen").positive)
+        self.assertIn("asrs-screen", [f.id for f in result.flags])
+
+    def test_it_refuses_the_full_form(self):
+        with self.assertRaises(CardError):
+            asrs_screener(questions(18, ASRS_SCALE))
+
+    def test_it_refuses_the_short_default_scale(self):
+        with self.assertRaises(CardError):
+            asrs_screener(questions(6, DEFAULT_SCALE))

@@ -171,27 +171,32 @@ class MentalSkillsTests(SimpleTestCase):
         result = score_assessment(self.card, self.answers(values))
         self.assertEqual(result.score("domain1").value, 4.8)
 
-    def test_the_gap_between_three_point_nine_and_four_is_reported(self):
-        """A problem in the source document, left visible rather than adjusted.
-
-        Bands run "3.0-3.9" then "4.0-5.0". A domain average moves in steps of
-        0.2 so cannot land between them, but the overall index averages eight of
-        those figures and can: six domains at 4.0 and two at 3.8 give 3.95.
-        """
+    def test_the_card_has_no_gaps_left(self):
+        """The document's bands left 3.9 to 4.0 uncovered; the practice closed it."""
         problems = [p for p in validate_card(self.card) if p.severity == ERROR]
-        self.assertTrue(
-            any("nothing covers 3.9 to 4" in p.message for p in problems),
-            [p.message for p in problems],
-        )
+        self.assertEqual(problems, [], [p.message for p in problems])
 
-    def test_the_score_that_falls_in_that_gap_is_reachable(self):
-        # Six domains at 4.0, two at 3.8.
+    def test_a_score_between_the_documents_bands_goes_in_the_lower_one(self):
+        """ "Lower band. Anything up until the minimum threshold of the next level
+        stays below." - the practice, 16 October 2026.
+
+        Six domains at 4.0 and two at 3.8 give 3.95.
+        """
         values = [4] * 30 + [4, 4, 4, 4, 3] + [4, 4, 4, 4, 3]
-        result = score_assessment(self.card, self.answers(values))
-        overall = result.score("overall")
+        overall = score_assessment(self.card, self.answers(values)).score("overall")
         self.assertEqual(overall.value, 3.95)
-        # And with the document's bands as written, it matches none of them.
-        self.assertIsNone(overall.band_id)
+        self.assertEqual(overall.band_id, "developing")
+
+    def test_the_highest_index_below_four_is_still_developing(self):
+        # Seven domains at 4.0 and one at 3.8 give 3.975.
+        values = [4] * 35 + [4, 4, 4, 4, 3]
+        overall = score_assessment(self.card, self.answers(values)).score("overall")
+        self.assertLess(overall.value, 4.0)
+        self.assertEqual(overall.band_id, "developing")
+
+    def test_four_is_a_strength(self):
+        overall = score_assessment(self.card, self.answers([4] * 40)).score("overall")
+        self.assertEqual(overall.band_id, "strength")
 
     def test_the_wrong_number_of_questions_is_refused(self):
         with self.assertRaises(CardError):

@@ -13,11 +13,15 @@ from .baker_street import _bands, _require_scale, _rules, _sequential_domains
 from .card import (
     AVERAGE,
     CLINICIAN,
+    INFO,
     REVIEW,
+    SUM,
+    CardError,
     FlagRule,
     QuestionRule,
     ScoreRule,
     ScoringCard,
+    Transform,
 )
 from .loader import question_rule
 
@@ -238,7 +242,206 @@ def mental_skills(questions: Sequence) -> ScoringCard:
     )
 
 
+# --------------------------------------------------------------------------- #
+# Return-to-Play Readiness Screener
+# --------------------------------------------------------------------------- #
+
+# Section, label, how many scored items, and how many of those are worded the
+# wrong way round. Read from the tag rather than from position, because the
+# screener is preceded by intake questions whose number is not fixed.
+RTP_DOMAINS = (
+    ("pain", "Pain & Symptom Experience", 5, 4),
+    ("mood", "Mood & Emotional Well-Being", 5, 0),
+    ("fear", "Fear of Movement & Re-Injury", 4, 0),
+    ("confidence", "Performance Confidence", 5, 0),
+    ("sport_readiness", "Sport-Specific Readiness", 5, 0),
+)
+
+RTP_NOTICE = (
+    "These ranges are provisional for pilot testing and are not validated "
+    "clinical cut scores. The screener does not provide medical clearance and "
+    "must not be used on its own to decide whether an athlete is safe to return "
+    "to play. Items marked 'not yet attempted' are excluded from the domain they "
+    "belong to rather than counted as zero, so a domain is scored against the "
+    "items that applied. A domain answered by fewer than half its items is "
+    "reported as insufficient data rather than scored."
+)
+
+
+def return_to_play(questions: Sequence) -> ScoringCard:
+    """Baker Street Return-to-Play Readiness Screener.
+
+    Five domains, each reported out of 20, summing to a readiness score of
+    0-100. High is favourable throughout: this measures readiness, not symptoms.
+
+    **The four reversed items.** The document states that "Questions 9-22 use a
+    0-4 scale" where "4 = Most favorable", but the first four items of the pain
+    domain are written the other way round - question 9 runs from "0 - None" to
+    "4 - Severe and difficult to function with". Taken literally, an athlete in
+    severe pain whose symptoms stop them functioning scores full marks for
+    readiness. Asked which way to resolve it, the practice replied on 16 October
+    2026: "Can these four items be reverse scored? Or is it better to change the
+    responses?"
+
+    They are reversed here rather than re-lettered. Rewriting the options would
+    put "4 - None" in front of an athlete, which reads as a scoring instruction
+    rather than a description of their pain, and would silently change what
+    every already-stored answer meant. Reversing changes only the arithmetic.
+
+    Every other item on the screener was checked and runs the right way: item 13
+    rates predictability, where high is genuinely favourable, and the mood and
+    fear domains are all worded from worst to best already.
+
+    Domains 1-3 sum their items and are scaled to 20. Domains 4 and 5 average
+    their 0-10 confidence ratings and scale the average to 20, which is what the
+    document asks for and is not the same thing when items are skipped.
+    """
+    rules = [question_rule(question) for question in questions]
+    scored = [rule for rule in rules if rule.scored]
+
+    by_domain = {}
+    for rule in scored:
+        by_domain.setdefault(rule.domain, []).append(rule)
+
+    known = {key for key, _, _, _ in RTP_DOMAINS} | {"global"}
+    unexpected = sorted(set(by_domain) - known)
+    if unexpected:
+        raise CardError(
+            "Return to Play does not recognise the section(s) "
+            + ", ".join(repr(name) for name in unexpected)
+        )
+
+    rebuilt: List[QuestionRule] = []
+    scores: List[ScoreRule] = []
+    flags: List[FlagRule] = []
+
+    for key, label, expected, reversed_count in RTP_DOMAINS:
+        held = by_domain.get(key, [])
+        if len(held) != expected:
+            raise CardError(
+                f"Return to Play expects {expected} questions tagged {key!r} but "
+                f"this assessment has {len(held)}."
+            )
+
+        low, high = (0, 10) if key in {"confidence", "sport_readiness"} else (0, 4)
+        _require_scale(held, low, high, f"Return to Play ({label})")
+
+        for index, rule in enumerate(held):
+            rebuilt.append(QuestionRule(
+                identifier=rule.identifier,
+                domain=key,
+                weight=rule.weight,
+                # The document lists the badly worded items first in the domain.
+                reverse=index < reversed_count,
+                scale_min=rule.scale_min,
+                scale_max=rule.scale_max,
+                scored=True,
+                # "Responses marked N/A are not scored as zero. They should be
+                # excluded from the denominator." Every item is allowed to be
+                # skipped; only some offer the option, and the rest simply never
+                # carry one.
+                allow_na=True,
+                options=rule.options,
+            ))
+
+        # Half the items, rounded up. The document says a domain with too few
+        # answers is "Unable to Calculate - Insufficient Data" without saying how
+        # few, so this is ours and is stated in the notice rather than hidden.
+        minimum = (expected + 1) // 2
+
+        scores.append(ScoreRule(
+            id=key,
+            label=label,
+            domain=key,
+            method=AVERAGE if key in {"confidence", "sport_readiness"} else SUM,
+            min_answered=minimum,
+            transform=Transform(kind="normalize", to=20),
+            precision=1,
+            granularity=0.1,
+        ))
+
+        flags.append(FlagRule(
+            id=f"rtp-{key.replace('_', '-')}-concern",
+            message=f"{label} is at or below 10 out of 20. The document marks this "
+                    f"a significant domain concern.",
+            severity=REVIEW,
+            audience=CLINICIAN,
+            score_id=key,
+            operator="<=",
+            value=10,
+        ))
+        flags.append(FlagRule(
+            id=f"rtp-{key.replace('_', '-')}-review",
+            message=f"{label} is below 15 out of 20, a potential meaningful barrier.",
+            severity=INFO,
+            audience=CLINICIAN,
+            score_id=key,
+            operator="<",
+            value=15,
+        ))
+
+    # The two standalone ratings. Neither belongs in the readiness score - the
+    # document keeps them apart from it - but the gap between what the athlete
+    # rates and what the clinician rates is a finding, and one number cannot
+    # show it.
+    for rule in by_domain.get("global", []):
+        rebuilt.append(QuestionRule(
+            identifier=rule.identifier, domain="global", scale_min=rule.scale_min,
+            scale_max=rule.scale_max, scored=True, options=rule.options,
+        ))
+    globals_held = by_domain.get("global", [])
+    if globals_held:
+        if len(globals_held) != 2:
+            raise CardError(
+                "Return to Play expects two questions tagged 'global', the "
+                f"athlete's rating and the clinician's, but has {len(globals_held)}."
+            )
+        _require_scale(globals_held, 0, 10, "Return to Play (overall ratings)")
+        scores.append(ScoreRule(
+            id="athlete_rating", label="Athlete's Overall Readiness Rating",
+            questions=[globals_held[0].identifier], min_answered=1, precision=0,
+        ))
+        scores.append(ScoreRule(
+            id="clinician_rating", label="Clinician's Readiness Rating",
+            questions=[globals_held[1].identifier], min_answered=1, precision=0,
+        ))
+
+    scores.append(ScoreRule(
+        id="overall",
+        label="Return-to-Play Readiness Score",
+        scores=[key for key, _, _, _ in RTP_DOMAINS],
+        min_answered=5,
+        precision=0,
+        bands=_bands(
+            ("significant-barriers", "Significant Reported Barriers", 0, 39,
+             "The athlete reports substantial barriers to return. Further "
+             "evaluation and individualised intervention should be considered."),
+            ("reduced", "Reduced Readiness", 40, 54,
+             "Substantial barriers may be present. Further evaluation and targeted "
+             "intervention should be considered."),
+            ("mixed", "Mixed Readiness", 55, 69,
+             "Meaningful barriers may be present. Review individual domains and "
+             "consider targeted intervention or further evaluation."),
+            ("favourable", "Generally Favorable", 70, 84,
+             "Some barriers may be present. Review individual domain scores and "
+             "consider monitored progression or targeted support."),
+            ("higher", "Higher Reported Readiness", 85, 100,
+             "Relatively few symptom, emotional, fear or confidence-related "
+             "barriers. Continue standard return-to-play evaluation."),
+        ),
+    ))
+
+    return ScoringCard(
+        questions=rebuilt,
+        scores=scores,
+        flags=flags,
+        primary_score="overall",
+        standing_notice=RTP_NOTICE,
+    )
+
+
 BUILDERS = {
+    "return_to_play": return_to_play,
     "sleep_and_recovery": sleep_and_recovery,
     "executive_self_assessment": executive_self_assessment,
     "mental_skills": mental_skills,

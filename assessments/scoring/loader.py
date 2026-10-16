@@ -22,6 +22,7 @@ from .card import (
     Band,
     CardError,
     FlagRule,
+    GateRule,
     QuestionRule,
     ScoreRule,
     ScoringCard,
@@ -177,6 +178,16 @@ def _transform_from(data: Optional[Mapping[str, Any]]) -> Optional[Transform]:
     )
 
 
+def _gate_from(data: Optional[Mapping[str, Any]]) -> Optional[GateRule]:
+    if not isinstance(data, Mapping):
+        return None
+    return GateRule(
+        question=str(data["question"]),
+        opens_at=float(data.get("opens_at", 1.0)),
+        closed_value=float(data.get("closed_value", 0.0)),
+    )
+
+
 def expand_card(data: Mapping[str, Any], questions: Sequence[Any]) -> Dict[str, Any]:
     """Fill in each card question's answer scale from the assessment itself.
 
@@ -257,6 +268,7 @@ def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
             precision=int(entry.get("precision", 2)),
             granularity=float(entry.get("granularity", 1.0)),
             positive_at=(int(entry["positive_at"]) if entry.get("positive_at") is not None else None),
+            gate=_gate_from(entry.get("gate")),
         ))
 
     flags = []
@@ -325,6 +337,11 @@ def card_to_dict(card: ScoringCard) -> Dict[str, Any]:
                 "precision": s.precision,
                 "granularity": s.granularity,
                 "positive_at": s.positive_at,
+                "gate": ({
+                    "question": s.gate.question,
+                    "opens_at": s.gate.opens_at,
+                    "closed_value": s.gate.closed_value,
+                } if s.gate else None),
             }
             for s in card.scores
         ],

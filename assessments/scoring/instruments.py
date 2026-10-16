@@ -19,12 +19,15 @@ from typing import List, Sequence
 
 from .card import (
     Band,
+    BRIEF,
     CardError,
     FlagRule,
+    GateRule,
     QuestionRule,
     ScoreRule,
     ScoringCard,
     THRESHOLD_COUNT,
+    Transform,
     URGENT,
     REVIEW,
     BOTH,
@@ -462,10 +465,182 @@ def asrs(questions: Sequence) -> ScoringCard:
     )
 
 
+# --------------------------------------------------------------------------- #
+# PC-PTSD-5
+# --------------------------------------------------------------------------- #
+
+def pc_ptsd_5(questions: Sequence) -> ScoringCard:
+    """Primary Care PTSD Screen for DSM-5. Six questions, total 0-5.
+
+    The first question is the trauma exposure gate and carries no score of its
+    own: "If the respondent answers 'no' to trauma exposure, the screen ends with
+    a score of 0." The five symptom items that follow are each a yes or a no.
+
+    The platform shows every question, so a respondent reporting no trauma
+    exposure still sees the five items. The gate on the total is what makes their
+    answers mean what the instrument says they mean.
+    """
+    rules = _rules(questions, 6, "PC-PTSD-5")
+    _check_scale(rules, 0, 1, "PC-PTSD-5")
+
+    gate_question, symptoms = rules[0], rules[1:]
+
+    # The gate records exposure; it is not a symptom and must not reach the
+    # total. Scored out the way the CAGE substance item is, but keeping its
+    # options so the gate can still read the answer.
+    rules = [
+        QuestionRule(
+            identifier=gate_question.identifier,
+            domain=gate_question.domain,
+            scored=False,
+            scale_min=gate_question.scale_min,
+            scale_max=gate_question.scale_max,
+            options=gate_question.options,
+        )
+    ] + list(symptoms)
+
+    total = ScoreRule(
+        id="total",
+        label="PC-PTSD-5 Total",
+        questions=[r.identifier for r in symptoms],
+        min_answered=5,
+        gate=GateRule(question=gate_question.identifier, opens_at=1, closed_value=0),
+        bands=[
+            Band("negative", "Negative screen", 0, 2,
+                 "Below the cut-point of three. A negative screen does not rule "
+                 "out PTSD; re-screen if there is reason to."),
+            Band("positive", "Positive screen", 3, 5,
+                 "At or above the cut-point of three. A positive screen is not a "
+                 "diagnosis and indicates further assessment for PTSD."),
+        ],
+    )
+
+    return ScoringCard(
+        questions=rules,
+        scores=[total],
+        report_style=BRIEF,
+        flags=[
+            FlagRule(
+                id="pc-ptsd-5-no-exposure",
+                message="No lifetime trauma exposure was reported, so the screen "
+                        "ends at zero and the symptom items carry no weight.",
+                severity=INFO,
+                audience=CLINICIAN,
+                questions=[gate_question.identifier],
+                operator="<=",
+                value=0,
+            ),
+            FlagRule(
+                id="pc-ptsd-5-stricter-cut-point",
+                message="Exactly three items endorsed. This is a positive screen "
+                        "at the usual cut-point of three; some populations use "
+                        "four, where it would not be.",
+                severity=INFO,
+                audience=CLINICIAN,
+                score_id="total",
+                operator="==",
+                value=3,
+            ),
+        ],
+        standing_notice=(
+            "Scored from zero to five by counting the symptom items answered yes. "
+            "A score of three or more is the usual positive screen, chosen to "
+            "maximise sensitivity; some populations use four. A positive screen "
+            "does not establish PTSD. Public domain: credit the VA National "
+            "Center for PTSD and keep the wording and scoring unchanged."
+        ),
+    )
+
+
+# --------------------------------------------------------------------------- #
+# WHO-5
+# --------------------------------------------------------------------------- #
+
+def who5(questions: Sequence) -> ScoringCard:
+    """WHO-5 Well-Being Index. Five items on 0-5, raw 0-25, percentage 0-100.
+
+    Unlike every other instrument here a high score is the good one: this
+    measures well-being, not symptoms. Both figures are reported because the
+    published cut-off is quoted both ways, as a raw score below 13 and as a
+    percentage below 50, and they are the same cut-off.
+    """
+    rules = _rules(questions, 5, "WHO-5")
+    _check_scale(rules, 0, 5, "WHO-5")
+    identifiers = [r.identifier for r in rules]
+
+    raw = ScoreRule(
+        id="raw",
+        label="WHO-5 Raw Score",
+        questions=identifiers,
+        min_answered=5,
+        bands=[
+            Band("very-low", "Very low well-being", 0, 7,
+                 "Strongly suggests depression or significant distress. "
+                 "Assess further."),
+            Band("low", "Low well-being", 8, 12,
+                 "Poor psychological well-being. Further evaluation is indicated."),
+            Band("normal-high", "Normal to high well-being", 13, 25,
+                 "At or above the cut-off for adequate well-being."),
+        ],
+    )
+
+    # The percentage is the raw score multiplied by four, so it moves in steps of
+    # four and its bands sit four apart rather than one. Reported alongside the
+    # raw score rather than instead of it, because the instrument's own
+    # interpretation table is written in both.
+    percentage = ScoreRule(
+        id="percentage",
+        label="WHO-5 Percentage Score",
+        questions=identifiers,
+        min_answered=5,
+        transform=Transform(kind="linear", multiply=4),
+        granularity=4,
+        bands=[
+            Band("very-low", "Very low well-being", 0, 28,
+                 "Strongly suggests depression or significant distress."),
+            Band("low", "Low well-being", 32, 48,
+                 "Poor psychological well-being; further evaluation is indicated."),
+            Band("normal-high", "Normal to high well-being", 52, 100,
+                 "At or above the cut-off of 50."),
+        ],
+    )
+
+    return ScoringCard(
+        questions=rules,
+        scores=[raw, percentage],
+        primary_score="raw",
+        report_style=BRIEF,
+        flags=[
+            FlagRule(
+                id="who5-below-cut-off",
+                message="Raw score of 12 or below, a percentage below 50. This is "
+                        "the published cut-off for poor well-being and warrants "
+                        "further assessment for depression. The WHO-5 neither "
+                        "diagnoses nor rules out depression.",
+                severity=REVIEW,
+                audience=CLINICIAN,
+                score_id="raw",
+                operator="<=",
+                value=12,
+            ),
+        ],
+        standing_notice=(
+            "A high score is the good one: this measures well-being, not symptoms. "
+            "Five items on nought to five give a raw score of 0-25, multiplied by "
+            "four for a percentage of 0-100. A percentage below 50, equivalently a "
+            "raw score below 13, indicates poor well-being and warrants further "
+            "assessment. Used under CC BY-NC-SA 3.0 IGO: attribute the WHO, do not "
+            "use the WHO logo and do not imply endorsement."
+        ),
+    )
+
+
 BUILDERS = {
     "phq9": phq9,
     "gad7": gad7,
     "cage_aid": cage_aid,
     "pcl5": pcl5,
     "asrs": asrs,
+    "pc_ptsd_5": pc_ptsd_5,
+    "who5": who5,
 }

@@ -145,6 +145,32 @@ def _numeric(value: Any) -> Optional[float]:
     return None
 
 
+def _gate_state(
+    card: ScoringCard,
+    score: ScoreRule,
+    answers: Mapping[str, Any],
+) -> Optional[bool]:
+    """Whether this score's gate is shut.
+
+    True shuts the score, False lets it run, and None means the gate question was
+    not answered at all - which decides nothing, so the score is reported as
+    insufficient rather than guessed either way.
+    """
+    gate = score.gate
+    rule = card.question(gate.question)
+    if rule is None:  # pragma: no cover - the card refuses this at build time
+        raise CardError(
+            f"Score {score.id!r} is gated on unknown question {gate.question!r}."
+        )
+    raw = answers.get(gate.question, None)
+    if is_na(raw):
+        return None
+    value = rule.value_of(raw)
+    if value is None:
+        return None
+    return not gate.opens(value)
+
+
 def _from_questions(
     card: ScoringCard,
     score: ScoreRule,
@@ -152,6 +178,20 @@ def _from_questions(
 ) -> ScoreResult:
     rules = card.questions_for(score)
     result = ScoreResult(id=score.id, label=score.label, status=OK, applicable=len(rules))
+
+    if score.gate is not None:
+        shut = _gate_state(card, score, answers)
+        if shut is None:
+            result.status = INSUFFICIENT_DATA
+            return result
+        if shut:
+            # The screen is over. Report the value the instrument says it ends
+            # on, against the full scale, so the band still reads as a result
+            # rather than as a missing one.
+            result.value = score.gate.closed_value
+            result.max_possible = sum(r.max_contribution() for r in rules)
+            result.answered = result.applicable
+            return _finish(score, result)
 
     contributions: List[float] = []
     maxima: List[float] = []

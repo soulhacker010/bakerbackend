@@ -144,6 +144,37 @@ class Band:
 
 
 # --------------------------------------------------------------------------- #
+# Gates
+# --------------------------------------------------------------------------- #
+
+@dataclass(frozen=True)
+class GateRule:
+    """A question that can close a score before its own items are read.
+
+    PC-PTSD-5 opens by asking whether the respondent has ever experienced a
+    traumatic event, and its documentation is explicit about what follows: "If
+    the respondent answers 'no' to trauma exposure, the screen ends with a score
+    of 0." The five symptom items are then never asked, so a score that required
+    them would report "insufficient data" for a screen that is complete, valid
+    and negative.
+
+    This is not branching. The platform stores one answer per question and shows
+    every question, so a respondent who reports no trauma exposure still sees the
+    five items. The gate decides what their answers mean, not whether they are
+    asked.
+    """
+
+    question: str
+    # The gate question's value must reach this for the score to be computed.
+    opens_at: float = 1.0
+    # What the score reads when the gate is shut.
+    closed_value: float = 0.0
+
+    def opens(self, value: float) -> bool:
+        return value >= self.opens_at
+
+
+# --------------------------------------------------------------------------- #
 # Transforms
 # --------------------------------------------------------------------------- #
 
@@ -225,6 +256,8 @@ class ScoreRule:
     granularity: float = 1.0
     # threshold_count only: how many qualifying answers make the screen positive.
     positive_at: Optional[int] = None
+    # A question that can close this score outright. See GateRule.
+    gate: Optional[GateRule] = None
 
     def __post_init__(self) -> None:
         sources = [s for s in (self.domain, self.questions, self.scores) if s is not None]
@@ -364,6 +397,11 @@ class ScoringCard:
                     raise CardError(f"Score {score.id!r} refers to unknown score {other!r}.")
                 if other == score.id:
                     raise CardError(f"Score {score.id!r} refers to itself.")
+            if score.gate is not None and score.gate.question not in seen:
+                raise CardError(
+                    f"Score {score.id!r} is gated on unknown question "
+                    f"{score.gate.question!r}."
+                )
 
         for flag in self.flags:
             for identifier in flag.questions or ():

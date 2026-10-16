@@ -68,6 +68,13 @@ def _question_range(card: ScoringCard, score: ScoreRule) -> Optional[Tuple[float
         low = sum(sorted(lows)[: score.min_answered])
     else:
         low = sum(lows)
+
+    if score.gate is not None:
+        # A shut gate reports its own value whatever the items say, so that value
+        # is reachable too and the bands have to cover it.
+        low = min(low, score.gate.closed_value)
+        high = max(high, score.gate.closed_value)
+
     return (low, high)
 
 

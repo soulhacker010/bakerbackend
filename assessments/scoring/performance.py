@@ -114,11 +114,11 @@ def executive_self_assessment(questions: Sequence) -> ScoringCard:
     Eight dimensions, three questions each, scored 1-5, so every dimension runs
     3-15 and the total runs 24-120.
 
-    Known problem with the document: it defines a "0-23 (Poor)" rating, but with
-    twenty-four questions that can never score below 1 each, the lowest reachable
-    total is 24. That band is unreachable. It is reproduced here as written so the
-    validator reports it rather than the figure being quietly adjusted; the client
-    needs to decide whether the band or the scale is wrong.
+    The document originally defined a "0-23 (Poor)" rating, which no submission
+    could reach: twenty-four questions that never score below 1 each cannot total
+    below 24. The practice resolved this on 16 October 2026 - "Change to 0 - 24
+    instead of 0 -23" - so Poor now runs to 24 and Needs Improvement starts at 25.
+    The floor of the scale reads as Poor, which is what was asked for.
 
     The document also asks for a written justification and an improvement step per
     dimension. Those are free-text fields on the assessment, not scored items, and
@@ -151,10 +151,10 @@ def executive_self_assessment(questions: Sequence) -> ScoringCard:
         scores=[key for key, _ in labels],
         min_answered=8,
         bands=_bands(
-            ("poor", "Poor", 0, 23,
+            ("poor", "Poor", 0, 24,
              "Immediate improvement is critical. Engage a coach or mentor to create a "
              "comprehensive development plan."),
-            ("needs-improvement", "Needs Improvement", 24, 47,
+            ("needs-improvement", "Needs Improvement", 25, 47,
              "Challenges across multiple areas. Develop a structured plan to address gaps."),
             ("adequate", "Adequate", 48, 71,
              "Basic expectations met, with significant inconsistencies. Implement the "

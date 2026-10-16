@@ -112,9 +112,16 @@ class LiveAbaParentTrainingTests(SimpleTestCase):
         problems = [p for p in validate_card(self.card()) if p.severity == ERROR]
         self.assertTrue(any("overlap at 100" in p.message for p in problems))
 
-    def test_an_unreachable_bottom_band_is_only_a_warning(self):
+    def test_the_dead_half_of_the_bottom_band_is_only_a_warning(self):
+        """The scale starts at 50, so half of the 0-100 band cannot happen.
+
+        That is worth saying, but the band itself is reachable - anything from
+        50 to 100 lands in it - so it is not reported as unreachable.
+        """
         problems = [p for p in validate_card(self.card()) if p.severity == WARNING]
-        self.assertTrue(any("can never be reached" in p.message for p in problems))
+        self.assertTrue(any("50 points of the bottom band are dead" in p.message
+                            for p in problems), [p.message for p in problems])
+        self.assertFalse(any("can never be reached" in p.message for p in problems))
 
 
 class FootHealthTransformTests(SimpleTestCase):
@@ -139,7 +146,8 @@ class FootHealthTransformTests(SimpleTestCase):
         card = band_card(items(15, 4), self.BANDS)
         self.assertEqual(achievable_range(card)["total"], (0, 60))
         problems = validate_card(card)
-        self.assertTrue(any("can never be reached" in p.message for p in problems))
+        self.assertTrue(any("40 points of the top band are dead" in p.message
+                            for p in problems), [p.message for p in problems])
 
 
 class PostpartumHalfPointTests(SimpleTestCase):

@@ -105,8 +105,9 @@ def phq9(questions: Sequence) -> ScoringCard:
         flags=[
             FlagRule(
                 id="phq9-item-9",
-                message="Item 9 was answered above zero. Review for risk before this "
-                        "result is filed, whatever the total score.",
+                message="Item 9 was answered above zero. Prompt a timely suicide "
+                        "risk assessment, regardless of the total score, before "
+                        "this result is filed.",
                 severity=URGENT,
                 audience=CLINICIAN,
                 questions=[item9],
@@ -152,7 +153,27 @@ def gad7(questions: Sequence) -> ScoringCard:
                  "Severe anxiety. Active treatment is probably warranted."),
         ],
     )
-    return ScoringCard(questions=rules, scores=[total])
+    return ScoringCard(
+        questions=rules,
+        scores=[total],
+        flags=[
+            # The bands alone do not carry this. Moderate starts at 10 and the
+            # practice treats 10 as the referral point, so a total of 10 and a
+            # total of 14 read the same from the band and differently from here.
+            FlagRule(
+                id="gad7-referral-cut-off",
+                message="Total of 10 or higher. This indicates a probable "
+                        "clinical diagnosis of generalised anxiety disorder and "
+                        "suggests further evaluation or referral by a healthcare "
+                        "professional is warranted.",
+                severity=REVIEW,
+                audience=CLINICIAN,
+                score_id="total",
+                operator=">=",
+                value=10,
+            ),
+        ],
+    )
 
 
 # --------------------------------------------------------------------------- #

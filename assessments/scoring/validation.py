@@ -168,17 +168,35 @@ def validate_card(card: ScoringCard) -> List[Problem]:
                 f"{covered_high:g}; {_round(high - covered_high):g} points return "
                 f"no interpretation",
             ))
-        if covered_high > high:
+        # A band nothing can land in, and a band merely drawn wider than the
+        # scale, are different faults. Reporting the second as the first is how
+        # a warning stops being read.
+        if bands[-1].minimum > high:
             problems.append(Problem(
                 score.id, WARNING,
-                f"bands run to {covered_high:g} but the highest achievable score "
-                f"is {high:g}, so the top band can never be reached",
+                f"band {bands[-1].id!r} starts at {bands[-1].minimum:g} but no "
+                f"score above {high:g} is possible, so it can never be reached",
             ))
-        if covered_low < low:
+        elif covered_high > high:
             problems.append(Problem(
                 score.id, WARNING,
-                f"bands start at {covered_low:g} but the lowest achievable score "
-                f"is {low:g}, so the bottom band can never be reached",
+                f"bands run to {covered_high:g} but no score above {high:g} is "
+                f"possible, so {_round(covered_high - high):g} points of the top "
+                f"band are dead",
+            ))
+
+        if bands[0].maximum < low:
+            problems.append(Problem(
+                score.id, WARNING,
+                f"band {bands[0].id!r} ends at {bands[0].maximum:g} but no score "
+                f"below {low:g} is possible, so it can never be reached",
+            ))
+        elif covered_low < low:
+            problems.append(Problem(
+                score.id, WARNING,
+                f"bands start at {covered_low:g} but no score below {low:g} is "
+                f"possible, so {_round(low - covered_low):g} points of the bottom "
+                f"band are dead",
             ))
 
     problems.sort(key=lambda p: 0 if p.severity == ERROR else 1)

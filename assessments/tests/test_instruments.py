@@ -190,3 +190,70 @@ class CageAidTests(SimpleTestCase):
         self.assertEqual(by_alcohol.score("total").value, 4)
         self.assertEqual(by_drugs.score("total").value, 4)
         self.assertEqual(by_alcohol.score("total").applicable, 4)
+
+
+class Gad7ReferralCutOffTests(SimpleTestCase):
+    """The practice's referral point, which the bands alone do not carry.
+
+    Moderate runs 10-14, so a total of 10 and a total of 14 read identically
+    from the band. The practice draws the line at 10: "Cut-off of 10 or higher:
+    Indicates a probable clinical diagnosis of Generalized Anxiety Disorder
+    (GAD) and suggests that further evaluation or referral by a healthcare
+    professional is warranted."
+    """
+
+    SCALE = ["0 - Not at all", "1 - Several days",
+             "2 - More than half the days", "3 - Nearly everyday"]
+
+    def setUp(self):
+        self.card = gad7([
+            AssessmentQuestion(
+                identifier=f"g{i}", order=i, text=f"item {i}",
+                response_type=AssessmentQuestion.ResponseType.LIKERT,
+                config={"options": list(self.SCALE)}, domain="general",
+            )
+            for i in range(1, 8)
+        ])
+
+    def answers(self, total):
+        """Seven items on 0-3 summing to ``total``."""
+        values, left = [], total
+        for _ in range(7):
+            take = min(3, left)
+            values.append(take)
+            left -= take
+        assert left == 0, "total of %s is not reachable on seven items" % total
+        return {f"g{i}": self.SCALE[v] for i, v in enumerate(values, 1)}
+
+    def fired(self, total):
+        result = score_assessment(self.card, self.answers(total))
+        self.assertEqual(result.score("total").value, total)
+        return "gad7-referral-cut-off" in [f.id for f in result.flags]
+
+    def test_nine_does_not_reach_the_cut_off(self):
+        self.assertFalse(self.fired(9))
+
+    def test_ten_does(self):
+        self.assertTrue(self.fired(10))
+
+    def test_it_stays_on_through_the_severe_range(self):
+        for total in (14, 15, 21):
+            self.assertTrue(self.fired(total), total)
+
+    def test_it_separates_two_totals_the_band_reads_the_same(self):
+        """Both are Moderate. Only one is at the referral point."""
+        ten = score_assessment(self.card, self.answers(10))
+        fourteen = score_assessment(self.card, self.answers(14))
+        self.assertEqual(ten.score("total").band_label,
+                         fourteen.score("total").band_label)
+        self.assertTrue(self.fired(10))
+
+    def test_the_message_says_what_the_practice_said(self):
+        result = score_assessment(self.card, self.answers(12))
+        flag = next(f for f in result.flags if f.id == "gad7-referral-cut-off")
+        self.assertIn("further evaluation or referral", flag.message)
+
+    def test_it_is_written_for_the_clinician_not_the_respondent(self):
+        result = score_assessment(self.card, self.answers(12))
+        flag = next(f for f in result.flags if f.id == "gad7-referral-cut-off")
+        self.assertEqual(flag.audience, "clinician")

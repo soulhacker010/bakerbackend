@@ -65,6 +65,29 @@ def score_response(assessment, answers: Mapping[str, Any]) -> Tuple[Dict[str, An
     return build_payload(card, result)
 
 
+# The practice's own crisis routing, supplied 16 October 2026. It rides with
+# every respondent-facing result rather than being conditioned on a score,
+# because the person most likely to need it is not reliably the one the
+# thresholds catch, and a screener finishing at 2am with nothing underneath it
+# was the gap this closes.
+#
+# The daytime number reaches the clinician who sent the assessment. Nothing here
+# is generated or inferred - changing a number means changing it here, once.
+CRISIS_SUPPORT = {
+    "heading": "If you need support now",
+    "lines": [
+        "During the day, call 833-937-2724 to reach the clinician who sent you "
+        "this assessment.",
+        "If you are experiencing an emergency or are in immediate danger, "
+        "call 911.",
+        "If you are in emotional distress or crisis, call or text 988 to reach "
+        "the Suicide & Crisis Lifeline, available 24/7.",
+        "In the evening, or if you feel you may harm yourself or someone else, "
+        "call 911 or go directly to your nearest emergency room.",
+    ],
+}
+
+
 # The audiences a flag may be written for. A flag says who it is for; nothing
 # else in a result does, which is why the rest is handled by removal below.
 _PATIENT_AUDIENCES = {"patient", "both"}
@@ -96,6 +119,10 @@ def for_respondent(data: Mapping[str, Any]) -> Dict[str, Any]:
     Scores, maximums and range labels are kept. "Depression 11 / 15, High" is the
     respondent's own result and is theirs to see. What the range means clinically,
     and what should be done about it, is a conversation with their clinician.
+
+    What is added is ``crisis_support``: the practice's own numbers, on every
+    respondent result. Removing a clinician's instructions leaves a person with a
+    score and no route anywhere, and this is the route.
     """
     out = {key: value for key, value in data.items() if key != "highlights"}
 
@@ -119,5 +146,12 @@ def for_respondent(data: Mapping[str, Any]) -> Dict[str, Any]:
                 for entry in scores
             ]
         out["score"] = trimmed
+
+    # Added last so it cannot be stripped by the removals above, and so a result
+    # that carries nothing else still carries this.
+    out["crisis_support"] = {
+        "heading": CRISIS_SUPPORT["heading"],
+        "lines": list(CRISIS_SUPPORT["lines"]),
+    }
 
     return out

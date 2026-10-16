@@ -107,23 +107,36 @@ class ExecutiveSelfAssessmentTests(SimpleTestCase):
         self.assertEqual(result.score("total").value, 120)
         self.assertEqual(result.score("total").band_id, "excellent")
 
-    def test_everything_at_one_reaches_the_documented_floor(self):
+    def test_everything_at_one_reads_as_poor(self):
+        """The floor of the scale, and the practice's answer to what it means.
+
+        The source document defined "0-23 (Poor)", which no submission could
+        reach: twenty-four items that never score below 1 put the floor at 24,
+        so the worst possible result read as Needs Improvement and Poor was
+        dead text. Asked about it, the practice replied "Change to 0 - 24
+        instead of 0 -23".
+        """
         result = score_assessment(self.card, self.answers([1] * 24))
         self.assertEqual(result.score("total").value, 24)
+        self.assertEqual(result.score("total").band_id, "poor")
+
+    def test_twenty_five_is_the_first_needs_improvement_score(self):
+        """Poor had to take 24 from Needs Improvement, not share it.
+
+        Two bands both containing 24 is the fault that made a score of exactly
+        100 read a level low on the ABA assessment: the first listed silently
+        wins and nothing reports the clash.
+        """
+        result = score_assessment(self.card, self.answers([1] * 23 + [2]))
+        self.assertEqual(result.score("total").value, 25)
         self.assertEqual(result.score("total").band_id, "needs-improvement")
 
-    def test_the_unreachable_poor_band_is_reported_but_does_not_block_saving(self):
-        """A problem in the source document, left visible rather than adjusted.
-
-        The document defines "0-23 (Poor)", but twenty-four items that cannot
-        score below 1 put the floor at 24. The band can never be reached.
-        """
+    def test_no_band_is_now_unreachable_and_none_overlap(self):
         problems = validate_card(self.card)
-        self.assertTrue(
-            any(p.severity == WARNING and "can never be reached" in p.message for p in problems),
-            [p.message for p in problems],
-        )
         self.assertEqual([p for p in problems if p.severity == ERROR], [])
+        self.assertEqual(
+            [p.message for p in problems if "can never be reached" in p.message], []
+        )
 
     def test_the_wrong_answer_scale_is_refused(self):
         with self.assertRaises(CardError):

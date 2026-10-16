@@ -432,6 +432,10 @@ def return_to_play(questions: Sequence) -> ScoringCard:
         ),
     ))
 
+    # The intake questions (sport, team, position...) score nothing, but the card
+    # still has to name them, or the assessment cannot be saved with it.
+    rebuilt += [rule for rule in rules if not rule.scored]
+
     return ScoringCard(
         questions=rebuilt,
         scores=scores,

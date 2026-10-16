@@ -113,8 +113,14 @@ class ReturnToPlayTests(SimpleTestCase):
         """Sport, position and the injury description are free text. Before the
         engine, a scorer that read numbers out of text would have added the year
         in "tore my ACL in 2024" to a clinical total."""
-        identifiers = [r.identifier for r in self.card.questions]
-        self.assertFalse([i for i in identifiers if i.startswith("intake-")])
+        intake = [r for r in self.card.questions if r.identifier.startswith("intake-")]
+        self.assertTrue(intake)
+        self.assertFalse([r.identifier for r in intake if r.scored])
+
+    def test_the_card_names_every_question(self):
+        """The live site refuses a card that leaves any question off it."""
+        stored = {q.identifier for q in questions()}
+        self.assertEqual({r.identifier for r in self.card.questions}, stored)
 
     # ------------------------------------------------- the reversed four
 

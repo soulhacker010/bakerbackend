@@ -696,6 +696,76 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             "name": full_name,
         }
 
+    # The editor used to append "-2" to every identifier on every save, so an
+    # answer stored a few saves ago is filed under a key that no longer matches
+    # its question: "...-foot-pain-mhxrisj1-1-2-2-2" against a question now
+    # called "...-foot-pain-mhxrisj1-1-2-2-2-2-2". Stripping the trailing "-2"s
+    # from both brings them back together.
+    _TRAILING_SAVE_SUFFIX = re.compile(r"(?:-2)+$")
+
+    @classmethod
+    def _identifier_base(cls, identifier: str) -> str:
+        return cls._TRAILING_SAVE_SUFFIX.sub("", identifier)
+
+    def _match_stored_answers(
+        self,
+        questions: list[AssessmentQuestion],
+        payload: dict[str, Any],
+    ) -> dict[Any, str]:
+        """Which stored answer key belongs to which question.
+
+        In three passes, each one only over what the earlier passes left:
+
+        1. An exact identifier, for every question, before anything is guessed.
+           Matching one question at a time let a fallback for question 1 take
+           question 10's answer before question 10 had looked for it.
+        2. The same identifier once the editor's "-2" suffixes are stripped -
+           only where exactly one question and exactly one answer share that
+           base. A guessed match shows a clinician the wrong answer under a
+           question, which is worse than showing them a code.
+        3. ``q<order>``, for the oldest records, where the number must end
+           there: "q1" is the start of "q10", "q11" and "q12" as well.
+        """
+        def key_of(question: AssessmentQuestion) -> Any:
+            return question.pk if question.pk is not None else id(question)
+
+        left = set(payload)
+        matched: dict[Any, str] = {}
+
+        for question in questions:
+            if question.identifier in left:
+                matched[key_of(question)] = question.identifier
+                left.discard(question.identifier)
+
+        unmatched = [q for q in questions if key_of(q) not in matched]
+
+        question_bases: dict[str, list[AssessmentQuestion]] = {}
+        for question in unmatched:
+            question_bases.setdefault(self._identifier_base(question.identifier), []).append(question)
+        answer_bases: dict[str, list[str]] = {}
+        for candidate in left:
+            answer_bases.setdefault(self._identifier_base(candidate), []).append(candidate)
+
+        for base, owners in question_bases.items():
+            candidates = answer_bases.get(base, [])
+            if len(owners) == 1 and len(candidates) == 1:
+                matched[key_of(owners[0])] = candidates[0]
+                left.discard(candidates[0])
+
+        for question in questions:
+            if key_of(question) in matched:
+                continue
+            order = getattr(question, "order", None)
+            if not isinstance(order, int):
+                continue
+            pattern = re.compile(rf"^q0*{order}(?!\d)")
+            hits = sorted(c for c in left if pattern.match(c))
+            if len(hits) == 1:
+                matched[key_of(question)] = hits[0]
+                left.discard(hits[0])
+
+        return matched
+
     def get_answers(self, obj: AssessmentResponse) -> list[dict[str, Any]]:
         responses_payload = obj.responses if isinstance(obj.responses, dict) else {}
         remaining_payload = dict(responses_payload)
@@ -708,25 +778,13 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             return [string_value] if string_value else []
 
         questions = list(obj.assessment.questions.all().order_by("order"))
-
-        def resolve_payload(question: AssessmentQuestion) -> tuple[Any, str] | tuple[None, None]:
-            identifier = question.identifier
-            if identifier in remaining_payload:
-                return remaining_payload.pop(identifier), identifier
-
-            order = getattr(question, "order", None)
-            if isinstance(order, int):
-                prefix = f"q{order}"
-                for candidate in list(remaining_payload.keys()):
-                    if candidate.startswith(prefix):
-                        return remaining_payload.pop(candidate), candidate
-
-            return None, None
+        matched = self._match_stored_answers(questions, remaining_payload)
 
         for question in questions:
-            raw_value, matched_identifier = resolve_payload(question)
+            matched_identifier = matched.get(question.pk if question.pk is not None else id(question))
             if matched_identifier is None:
                 continue
+            raw_value = remaining_payload.pop(matched_identifier)
 
             selected_values = normalise_to_list(raw_value)
 

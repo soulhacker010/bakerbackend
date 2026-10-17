@@ -292,8 +292,72 @@ def ef_adults_adolescents(questions: Sequence) -> ScoringCard:
     )
 
 
+# Executive Functioning Assessment (Ages 3-10), parent version: which questions
+# make up each section, from the document's "For clinician use only" key.
+AGES_3_10_SECTIONS = [
+    ("working_memory", "Working Memory", (2, 6, 9, 11, 16, 18, 20, 26, 35, 40)),
+    ("inhibitory_control", "Inhibitory Control", (7, 10, 14, 17, 21, 22, 25, 31, 34, 37)),
+    ("cognitive_flexibility", "Cognitive Flexibility", (3, 5, 13, 15, 19, 24, 27, 29, 33, 36)),
+    ("emotional_regulation", "Emotional Regulation", (1, 4, 8, 12, 23, 28, 30, 32, 38, 39)),
+]
+
+
+def ef_ages_3_10(questions: Sequence) -> ScoringCard:
+    """Executive Functioning Assessment for Preschool and Elementary Children (Ages 3-10).
+
+    Forty items on 0-3, parent report. The sections are interleaved rather than
+    in blocks, so membership comes from the document's key, not position runs.
+    Each section sums to 0-30 and the global score sums all forty to 0-120.
+
+    The document also suggests comparing parent and clinician scores. It holds
+    only the parent version, so that comparison is the clinician's reading of
+    two results side by side, not a score of its own.
+    """
+    rules = _rules(questions, 40, "Executive Functioning Ages 3-10")
+    _require_scale(rules, 0, 3, "Executive Functioning Ages 3-10")
+    domain_of = {n: domain for domain, _, items in AGES_3_10_SECTIONS for n in items}
+    if sorted(domain_of) != list(range(1, 41)):
+        raise CardError("Executive Functioning Ages 3-10 sections must cover questions 1-40 once each.")
+    rules = [
+        QuestionRule(
+            identifier=rule.identifier, domain=domain_of[position],
+            scale_min=rule.scale_min, scale_max=rule.scale_max, options=rule.options,
+        )
+        for position, rule in enumerate(rules, start=1)
+    ]
+
+    sections = [
+        ScoreRule(
+            id=domain, label=label, domain=domain, min_answered=10,
+            bands=_bands(
+                ("minimal", "Minimal difficulties", 0, 10, "Typical for age."),
+                ("mild", "Mild difficulties", 11, 17,
+                 "Monitor and consider targeted support (e.g., classroom accommodations)."),
+                ("significant", "Significant difficulties", 18, 30,
+                 "Recommend further evaluation by a pediatric psychologist or neuropsychologist."),
+            ),
+        )
+        for domain, label, _ in AGES_3_10_SECTIONS
+    ]
+    total = ScoreRule(
+        id="total", label="Global Executive Functioning",
+        scores=[section.id for section in sections], min_answered=4,
+        bands=_bands(
+            ("minimal", "Minimal difficulties", 0, 40,
+             "Minimal executive functioning difficulties; likely age-appropriate."),
+            ("mild-moderate", "Mild to moderate difficulties", 41, 70,
+             "Consider behavioral interventions or educational supports."),
+            ("significant", "Significant difficulties", 71, 120,
+             "Recommend comprehensive assessment for conditions like ADHD, autism spectrum "
+             "disorder, or developmental delays."),
+        ),
+    )
+    return ScoringCard(questions=rules, scores=sections + [total], primary_score="total")
+
+
 BUILDERS = {
     "efaa": efaa,
     "ef_severity_scale": ef_severity_scale,
     "ef_adults_adolescents": ef_adults_adolescents,
+    "ef_ages_3_10": ef_ages_3_10,
 }

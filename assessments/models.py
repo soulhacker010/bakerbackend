@@ -23,6 +23,13 @@ class AssessmentCategory(models.Model):
     def __str__(self) -> str:  # pragma: no cover - display helper
         return self.name
 
+    def save(self, *args, **kwargs):
+        # The API treats the slug as read-only, so one created through it
+        # arrived with none, and the second one clashed with the first.
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
+
 
 class AssessmentTag(models.Model):
     name = models.CharField(max_length=100, unique=True)
@@ -36,6 +43,13 @@ class AssessmentTag(models.Model):
 
     def __str__(self) -> str:  # pragma: no cover - display helper
         return self.name
+
+    def save(self, *args, **kwargs):
+        # The API treats the slug as read-only, so one created through it
+        # arrived with none, and the second one clashed with the first.
+        if not self.slug:
+            self.slug = slugify(self.name)
+        super().save(*args, **kwargs)
 
 
 class Assessment(models.Model):

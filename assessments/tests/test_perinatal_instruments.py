@@ -7,7 +7,7 @@ from django.test import SimpleTestCase
 
 from assessments.models import AssessmentQuestion
 from assessments.scoring import CardError, score_assessment
-from assessments.scoring.perinatal import expectant_mothers, postpartum_fathers
+from assessments.scoring.perinatal import expectant_mothers, postpartum_fathers, postpartum_mothers
 from assessments.scoring.validation import ERROR, achievable_range, validate_card
 
 SCALE = ["0 - Not at all", "1 - Several days", "2 - More than half the days", "3 - Nearly everyday"]
@@ -162,3 +162,83 @@ class ExpectantMothersTests(SimpleTestCase):
         result = score_assessment(self.card, answers)
         self.assertEqual(result.score("suicidal").status, "insufficient_data")
         self.assertEqual(result.flags, [])
+
+
+MOTHERS_SCALE = ["0 - Not at all", "1 - Sometimes", "2 - Often", "3 - Always"]
+
+
+class PostpartumMothersTests(SimpleTestCase):
+    """Held to the Postpartum Mental Health Screener (Weighted) document."""
+
+    def setUp(self):
+        self.card = postpartum_mothers(questions(25, options=MOTHERS_SCALE))
+
+    def answers(self, values):
+        return {f"q{i}": MOTHERS_SCALE[v] for i, v in enumerate(values, 1)}
+
+    def score(self, values):
+        return score_assessment(self.card, self.answers(values))
+
+    def test_card_is_sound(self):
+        self.assertEqual([p for p in validate_card(self.card) if p.severity == ERROR], [])
+
+    def test_the_documented_ranges(self):
+        ranges = achievable_range(self.card)
+        self.assertEqual(ranges["depression"], (0, 34.5))
+        self.assertEqual(ranges["anxiety"], (0, 34.5))
+        self.assertEqual(ranges["psychosis"], (0, 30))
+        self.assertEqual(ranges["total"], (0, 99))
+
+    def test_every_answer_at_the_top_reaches_ninety_nine(self):
+        result = self.score([3] * 25)
+        self.assertEqual(result.score("total").value, 99)
+        self.assertEqual(result.score("total").band_id, "severe")
+
+    def test_weights_follow_the_document(self):
+        # Item 2 counts 1.5x, item 1 1x; item 11 1.5x; item 21 2x.
+        values = [0] * 25
+        values[1] = 1
+        values[0] = 1
+        self.assertEqual(self.score(values).score("depression").value, 2.5)
+        values = [0] * 25
+        values[10] = 2
+        self.assertEqual(self.score(values).score("anxiety").value, 3)
+        values = [0] * 25
+        values[21] = 3
+        self.assertEqual(self.score(values).score("psychosis").value, 6)
+
+    def test_a_half_point_between_ranges_stays_in_the_lower_one(self):
+        # 1.5 + 7 = 8.5 sits between the document's 0-8 and 9-17.
+        values = [0] * 25
+        values[1] = 1                 # item 2 at 1.5x
+        for item in (1, 3, 5, 7, 8, 9, 10):  # the seven 1x depression items
+            values[item - 1] = 1
+        result = self.score(values)
+        self.assertEqual(result.score("depression").value, 8.5)
+        self.assertEqual(result.score("depression").band_id, "minimal")
+
+    def test_question_six_flags_whatever_the_total(self):
+        values = [0] * 25
+        values[5] = 1
+        result = self.score(values)
+        self.assertEqual(result.score("total").band_id, "good")
+        fired = {flag.id for flag in result.flags}
+        self.assertIn("harm-self", fired)
+        self.assertIn("harm-self-respondent", fired)
+
+    def test_question_twenty_one_flags_whatever_the_total(self):
+        values = [0] * 25
+        values[20] = 1
+        fired = {flag.id for flag in self.score(values).flags}
+        self.assertIn("intrusive-harm", fired)
+        self.assertIn("intrusive-harm-respondent", fired)
+
+    def test_no_flags_when_neither_item_is_endorsed(self):
+        values = [2] * 25
+        values[5] = 0
+        values[20] = 0
+        self.assertEqual(self.score(values).flags, [])
+
+    def test_refuses_the_wrong_number_of_questions(self):
+        with self.assertRaises(CardError):
+            postpartum_mothers(questions(24, options=MOTHERS_SCALE))

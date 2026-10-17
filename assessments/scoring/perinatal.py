@@ -1,4 +1,4 @@
-"""Scoring cards for the two perinatal screeners.
+"""Scoring cards for the three perinatal screeners.
 
 Both are Baker Street's own instruments and both carry a section that, on its
 own, directs immediate action. That is the whole reason the flag mechanism
@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Sequence
 
 from .baker_street import _bands, _require_scale, _rules, _sequential_domains
-from .card import CLINICIAN, URGENT, FlagRule, ScoreRule, ScoringCard
+from .card import CLINICIAN, PATIENT, URGENT, FlagRule, QuestionRule, ScoreRule, ScoringCard
 
 
 def postpartum_fathers(questions: Sequence) -> ScoringCard:
@@ -238,7 +238,150 @@ def expectant_mothers(questions: Sequence) -> ScoringCard:
     )
 
 
+# Postpartum Mental Health Screener: the items the document weights above 1x.
+POSTPARTUM_WEIGHTS = {2: 1.5, 4: 1.5, 6: 1.5, 11: 1.5, 15: 1.5, 19: 1.5,
+                      21: 2.0, 22: 2.0, 23: 2.0, 24: 2.0, 25: 2.0}
+
+
+def postpartum_mothers(questions: Sequence) -> ScoringCard:
+    """Postpartum Mental Health Screener (Weighted), for new mothers.
+
+    Twenty-five items on 0-3 in three sections: depression 1-10, anxiety 11-20
+    and psychosis 21-25. Items 2, 4, 6, 11, 15 and 19 count 1.5x and the five
+    psychosis items 2x, so depression and anxiety run 0-34.5, psychosis 0-30
+    and the total 0-99, as the document's own arithmetic states. Its heading
+    for depression says 0-36; its sum and its interpretation both say 34.5,
+    which is what the weights produce.
+
+    The weights put scores on half points, and the document's ranges stop at
+    whole ones (0-8, then 9-17), leaving 8.5 in neither. Joe settled the same
+    question for the Mental Skills Screener on 16 October 2026: "Anything up
+    until the minimum threshold of the next level stays below." So 8.5 reads
+    Minimal and each range runs up to the next one's start.
+
+    Psychosis items count 2x, so that score only lands on even numbers; its
+    ranges of 0, 2-8 and 10-30 leave nothing reachable uncovered.
+    """
+    rules = _sequential_domains(
+        _rules(questions, 25, "Postpartum Mothers"),
+        [("depression", 10), ("anxiety", 10), ("psychosis", 5)],
+    )
+    _require_scale(rules, 0, 3, "Postpartum Mothers")
+    rules = [
+        QuestionRule(
+            identifier=rule.identifier, domain=rule.domain,
+            weight=POSTPARTUM_WEIGHTS.get(position, 1.0),
+            scale_min=rule.scale_min, scale_max=rule.scale_max,
+            options=rule.options,
+        )
+        for position, rule in enumerate(rules, start=1)
+    ]
+
+    sections = [
+        ScoreRule(
+            id="depression", label="Depression", domain="depression",
+            min_answered=10, granularity=0.5, precision=1,
+            bands=_bands(
+                ("minimal", "Minimal", 0, 8.5,
+                 "Focus on self-care (rest, nutrition, social support)."),
+                ("mild", "Mild", 9, 17.5,
+                 "Consider joining a support group or speaking with a therapist."),
+                ("moderate", "Moderate", 18, 26.5,
+                 "Recommend consulting a therapist and possibly a psychiatrist."),
+                ("severe", "Severe", 27, 34.5,
+                 "Seek an urgent psychiatric evaluation and therapy."),
+            ),
+        ),
+        ScoreRule(
+            id="anxiety", label="Anxiety", domain="anxiety",
+            min_answered=10, granularity=0.5, precision=1,
+            bands=_bands(
+                ("minimal", "Minimal", 0, 8.5,
+                 "Practice self-care (mindfulness, relaxation techniques)."),
+                ("mild", "Mild", 9, 17.5,
+                 "Consider therapy or stress-reduction strategies."),
+                ("moderate", "Moderate", 18, 26.5,
+                 "Recommend consulting a therapist and possibly a psychiatrist."),
+                ("severe", "Severe", 27, 34.5,
+                 "Seek an urgent psychiatric evaluation and therapy."),
+            ),
+        ),
+        ScoreRule(
+            id="psychosis", label="Psychosis", domain="psychosis",
+            min_answered=5, granularity=2, precision=1,
+            bands=_bands(
+                ("none", "No symptoms", 0, 0, "No action needed."),
+                ("mild", "Mild", 2, 8, "Consult a therapist immediately for evaluation."),
+                ("moderate-severe", "Moderate to Severe", 10, 30,
+                 "Seek an urgent psychiatric evaluation."),
+            ),
+        ),
+    ]
+
+    total = ScoreRule(
+        id="total", label="Total Wellness Score",
+        scores=[section.id for section in sections],
+        min_answered=3, granularity=0.5, precision=1,
+        bands=_bands(
+            ("good", "Good overall wellness", 0, 24.5, "Continue self-care practices."),
+            ("mild", "Mild concerns", 25, 49.5,
+             "Consider therapy or support groups for additional support."),
+            ("moderate", "Moderate concerns", 50, 74.5,
+             "Recommend therapy and possibly a psychiatric consultation."),
+            ("severe", "Severe concerns", 75, 99,
+             "Seek an urgent psychiatric evaluation and therapy."),
+        ),
+    )
+
+    harm_item = rules[5].identifier       # 6. Have you thought about harming yourself?
+    intrusive_item = rules[20].identifier  # 21. Disturbing thoughts of harming yourself or your baby
+
+    # The document directs immediate contact on either item at 1 or higher,
+    # whatever the totals. Weighted at 1.5x and 2x they still barely move a
+    # 0-99 total, so only a flag of their own can carry this.
+    return ScoringCard(
+        questions=rules,
+        scores=sections + [total],
+        primary_score="total",
+        flags=[
+            FlagRule(
+                id="harm-self",
+                message="Question 6 (thoughts of harming herself) was answered 1 or higher. "
+                        "The instrument directs that she contact a healthcare provider "
+                        "immediately, whatever the total score.",
+                severity=URGENT, audience=CLINICIAN,
+                questions=[harm_item], operator=">=", value=1,
+            ),
+            FlagRule(
+                id="harm-self-respondent",
+                message="You indicated thoughts of harming yourself. Please contact your "
+                        "healthcare provider straight away. If you are in immediate danger, "
+                        "contact your local emergency services.",
+                severity=URGENT, audience=PATIENT,
+                questions=[harm_item], operator=">=", value=1,
+            ),
+            FlagRule(
+                id="intrusive-harm",
+                message="Question 21 (disturbing thoughts of harming herself or her baby that "
+                        "feel out of her control) was answered 1 or higher. The instrument "
+                        "directs that she contact a healthcare provider immediately.",
+                severity=URGENT, audience=CLINICIAN,
+                questions=[intrusive_item], operator=">=", value=1,
+            ),
+            FlagRule(
+                id="intrusive-harm-respondent",
+                message="You indicated disturbing thoughts of harming yourself or your baby. "
+                        "Please contact your healthcare provider straight away. If you are in "
+                        "immediate danger, contact your local emergency services.",
+                severity=URGENT, audience=PATIENT,
+                questions=[intrusive_item], operator=">=", value=1,
+            ),
+        ],
+    )
+
+
 BUILDERS = {
     "postpartum_fathers": postpartum_fathers,
     "expectant_mothers": expectant_mothers,
+    "postpartum_mothers": postpartum_mothers,
 }

@@ -236,3 +236,37 @@ class AdminEndpointTests(ThrottledAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.target.refresh_from_db()
         self.assertTrue(self.target.is_approved)
+
+
+class SignupResendTests(ThrottledAPITestCase):
+    """"Resend code" during sign-up crashed: timedelta was never imported."""
+
+    def make_challenge(self, sent_seconds_ago):
+        from datetime import timedelta
+        from django.utils import timezone
+        from accounts.models import SignupVerificationChallenge
+
+        now = timezone.now()
+        return SignupVerificationChallenge.objects.create(
+            email="new.clinician@example.com", first_name="New", last_name="Clinician",
+            password_hash="x", code_hash="x", code_salt="x",
+            expires_at=now + timedelta(minutes=10),
+            last_sent_at=now - timedelta(seconds=sent_seconds_ago),
+        )
+
+    def url(self):
+        return reverse("accounts:signup-resend")
+
+    @patch("accounts.email_signup_verification.send_signup_verification_email")
+    def test_resend_sends_a_new_code(self, send):
+        challenge = self.make_challenge(sent_seconds_ago=60)
+        response = self.client.post(self.url(), {"challenge_id": str(challenge.challenge_id)}, format="json")
+        self.assertLess(response.status_code, 400, response.content)
+        send.assert_called_once()
+
+    @patch("accounts.email_signup_verification.send_signup_verification_email")
+    def test_resend_too_soon_is_refused_politely(self, send):
+        challenge = self.make_challenge(sent_seconds_ago=5)
+        response = self.client.post(self.url(), {"challenge_id": str(challenge.challenge_id)}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        send.assert_not_called()

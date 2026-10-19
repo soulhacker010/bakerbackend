@@ -95,9 +95,9 @@ class QuestionRule:
         """The value this answer adds, after reversing and weighting."""
         value = float(answer)
         if self.reverse:
-            # Documented in the source instruments as, for example, 0->3, 1->2,
-            # 2->1, 3->0 on the EFAA.
-            value = float(self.scale_max) - value
+            # Mirrors the answer across its scale: 0->3, 1->2, 2->1, 3->0 on the
+            # EFAA, and 1->4, 2->3 on the Oldenburg, whose scale starts at 1.
+            value = float(self.scale_min) + float(self.scale_max) - value
         return value * self.weight
 
     def max_contribution(self) -> float:
@@ -115,7 +115,7 @@ class QuestionRule:
                 "normalised or averaged score."
             )
         # Reversing turns the scale around, so the bounds swap with it: an item
-        # answered at the top of a reversed 1-5 scale contributes zero, not five.
+        # answered at the top of a reversed 1-5 scale contributes one, not five.
         low = self.contribution(self.scale_min)
         high = self.contribution(self.scale_max)
         return (low, high)

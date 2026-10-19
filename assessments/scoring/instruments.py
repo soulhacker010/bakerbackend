@@ -674,6 +674,61 @@ def who5(questions: Sequence) -> ScoringCard:
     )
 
 
+# Oldenburg Burnout Inventory: section membership and reversed items, from the
+# practice's October 2026 update.
+OLBI_EXHAUSTION = (2, 4, 5, 8, 10, 12, 14, 16)
+OLBI_DISENGAGEMENT = (1, 3, 6, 7, 9, 11, 13, 15)
+OLBI_REVERSED = (2, 3, 4, 6, 8, 9, 11, 12)
+
+
+def olbi(questions: Sequence) -> ScoringCard:
+    """Oldenburg Burnout Inventory (OLBI). Sixteen items on 1-4, total 16-64.
+
+    The answers run 4 = Strongly Disagree to 1 = Strongly Agree. Items 2, 3, 4,
+    6, 8, 9, 11 and 12 are reversed (1 to 4, 2 to 3) so that a higher total
+    always means more burnout. Exhaustion and Disengagement each run 8-32; the
+    document gives cut-offs for the total only, so the two sections are
+    reported as figures.
+    """
+    rules = _rules(questions, 16, "OLBI")
+    _check_scale(rules, 1, 4, "OLBI")
+    domain_of = {n: "exhaustion" for n in OLBI_EXHAUSTION}
+    domain_of.update({n: "disengagement" for n in OLBI_DISENGAGEMENT})
+    rules = [
+        QuestionRule(
+            identifier=rule.identifier, domain=domain_of[position],
+            reverse=position in OLBI_REVERSED,
+            scale_min=rule.scale_min, scale_max=rule.scale_max, options=rule.options,
+        )
+        for position, rule in enumerate(rules, start=1)
+    ]
+
+    sections = [
+        ScoreRule(id="exhaustion", label="Exhaustion", domain="exhaustion", min_answered=8),
+        ScoreRule(id="disengagement", label="Disengagement", domain="disengagement", min_answered=8),
+    ]
+    total = ScoreRule(
+        id="total", label="OLBI Total",
+        scores=["exhaustion", "disengagement"], min_answered=2,
+        bands=[
+            Band("low", "Low burnout", 16, 29, "Total score below 30."),
+            Band("medium", "Medium burnout", 30, 45, "Total score between 30 and 45."),
+            Band("high", "High burnout", 46, 64, "Total score above 45."),
+        ],
+    )
+    return ScoringCard(
+        questions=rules,
+        scores=sections + [total],
+        primary_score="total",
+        report_style=BRIEF,
+        standing_notice=(
+            "Higher scores indicate more burnout. Exhaustion reflects physical, "
+            "affective and cognitive fatigue; Disengagement reflects distancing from "
+            "work and negative attitudes toward the job."
+        ),
+    )
+
+
 BUILDERS = {
     "phq9": phq9,
     "gad7": gad7,
@@ -683,4 +738,5 @@ BUILDERS = {
     "asrs_screener": asrs_screener,
     "pc_ptsd_5": pc_ptsd_5,
     "who5": who5,
+    "olbi": olbi,
 }

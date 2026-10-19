@@ -90,7 +90,7 @@ def phq9(questions: Sequence) -> ScoringCard:
             Band("mild", "Mild", 5, 9,
                  "Mild symptoms. Watchful waiting; repeat the measure at follow-up."),
             Band("moderate", "Moderate", 10, 14,
-                 "Moderate symptoms. Consider counselling, follow-up or pharmacotherapy."),
+                 "Moderate symptoms. Consider counseling, follow-up or pharmacotherapy."),
             Band("moderately-severe", "Moderately severe", 15, 19,
                  "Moderately severe symptoms. Active treatment with pharmacotherapy "
                  "and/or psychotherapy is usually indicated."),
@@ -163,7 +163,7 @@ def gad7(questions: Sequence) -> ScoringCard:
             FlagRule(
                 id="gad7-referral-cut-off",
                 message="Total of 10 or higher. This indicates a probable "
-                        "clinical diagnosis of generalised anxiety disorder and "
+                        "clinical diagnosis of generalized anxiety disorder and "
                         "suggests further evaluation or referral by a healthcare "
                         "professional is warranted.",
                 severity=REVIEW,
@@ -318,7 +318,7 @@ def pcl5(questions: Sequence) -> ScoringCard:
         bands=[
             Band("below", "Below the provisional cut-off", 0, PCL5_CUTOFF - 1,
                  "Below the provisional cut-off of 31. Read alongside clinical "
-                 "judgement; a low total does not rule out PTSD."),
+                 "judgment; a low total does not rule out PTSD."),
             Band("at_or_above", "At or above the provisional cut-off", PCL5_CUTOFF, 80,
                  "At or above the provisional cut-off of 31, which the guidance gives "
                  "as 31-33 pending further validation. Indicates a structured "
@@ -422,7 +422,7 @@ def asrs_screener(questions: Sequence) -> ScoringCard:
     """The six-item ASRS v1.1 Screener: Part A on its own.
 
     The practice moved to it on 16 October 2026. The 18-item form needs a
-    commercial licence for website use; the six-item screener is free with
+    commercial license for website use; the six-item screener is free with
     attribution and may not be modified. Part A is scored exactly as it is in
     the full form, so a result reads the same on either.
     """
@@ -584,7 +584,7 @@ def pc_ptsd_5(questions: Sequence) -> ScoringCard:
         standing_notice=(
             "Scored from zero to five by counting the symptom items answered yes. "
             "A score of three or more is the usual positive screen, chosen to "
-            "maximise sensitivity; some populations use four. A positive screen "
+            "maximize sensitivity; some populations use four. A positive screen "
             "does not establish PTSD. Public domain: credit the VA National "
             "Center for PTSD and keep the wording and scoring unchanged."
         ),

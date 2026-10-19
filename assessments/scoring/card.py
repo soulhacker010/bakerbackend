@@ -112,7 +112,7 @@ class QuestionRule:
         if self.scale_max is None:
             raise CardError(
                 f"Question {self.identifier!r} needs scale_max to take part in a "
-                "normalised or averaged score."
+                "normalized or averaged score."
             )
         # Reversing turns the scale around, so the bounds swap with it: an item
         # answered at the top of a reversed 1-5 scale contributes one, not five.
@@ -205,7 +205,7 @@ class Transform:
             return raw * self.multiply / self.divide
         if max_possible == 0:
             # Caller guards this; returning 0 here would invent a score.
-            raise CardError("Cannot normalise against a maximum of zero.")
+            raise CardError("Cannot normalize against a maximum of zero.")
         return (raw / max_possible) * self.to
 
 

@@ -142,7 +142,7 @@ def executive_self_assessment(questions: Sequence) -> ScoringCard:
         ("focus", "Focus"),
         ("delegation", "Task Delegation"),
         ("time_management", "Time Management"),
-        ("health", "Health Optimisation and Self-Care"),
+        ("health", "Health Optimization and Self-Care"),
         ("self_monitoring", "Self-Monitoring"),
     ]
     sections = [
@@ -273,7 +273,7 @@ def return_to_play(questions: Sequence) -> ScoringCard:
     """Baker Street Return-to-Play Readiness Screener.
 
     Five domains, each reported out of 20, summing to a readiness score of
-    0-100. High is favourable throughout: this measures readiness, not symptoms.
+    0-100. High is favorable throughout: this measures readiness, not symptoms.
 
     **The four reversed items.** The document states that "Questions 9-22 use a
     0-4 scale" where "4 = Most favorable", but the first four items of the pain
@@ -290,7 +290,7 @@ def return_to_play(questions: Sequence) -> ScoringCard:
     every already-stored answer meant. Reversing changes only the arithmetic.
 
     Every other item on the screener was checked and runs the right way: item 13
-    rates predictability, where high is genuinely favourable, and the mood and
+    rates predictability, where high is genuinely favorable, and the mood and
     fear domains are all worded from worst to best already.
 
     Domains 1-3 sum their items and are scaled to 20. Domains 4 and 5 average
@@ -308,7 +308,7 @@ def return_to_play(questions: Sequence) -> ScoringCard:
     unexpected = sorted(set(by_domain) - known)
     if unexpected:
         raise CardError(
-            "Return to Play does not recognise the section(s) "
+            "Return to Play does not recognize the section(s) "
             + ", ".join(repr(name) for name in unexpected)
         )
 

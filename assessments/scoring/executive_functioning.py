@@ -29,7 +29,7 @@ DOMAINS = [
     ("task_initiation", "Task Initiation / Monitoring"),
     ("emotional_regulation", "Emotional Regulation"),
     ("inhibition", "Inhibition"),
-    ("planning", "Planning / Organisation"),
+    ("planning", "Planning / Organization"),
 ]
 
 NOTICE = (
@@ -96,7 +96,7 @@ def efaa(questions: Sequence) -> ScoringCard:
             ("moderate", "Moderate elevation", 58, 86,
              "Moderate elevation. Comprehensive assessment and structured intervention recommended."),
             ("significant", "Significant elevation", 87, 144,
-             "Significant elevation. Prioritise intensive supports and further evaluation."),
+             "Significant elevation. Prioritize intensive supports and further evaluation."),
         ),
     )
 
@@ -191,7 +191,7 @@ def ef_severity_scale(questions: Sequence) -> ScoringCard:
 
     That inference still needs confirming, and the total is therefore left
     without ranges rather than given ones nobody has stated. Reporting a bare
-    figure understates nothing; the previous behaviour reported "Significant
+    figure understates nothing; the previous behavior reported "Significant
     Impairment" for a total of 17 out of 120, and nothing at all above 24.
     """
     base = _rules(questions, 30, "EF Severity Scale")
@@ -222,7 +222,7 @@ def ef_severity_scale(questions: Sequence) -> ScoringCard:
     flags = [
         FlagRule(
             id=f"{key}-significant",
-            message=f"{label} is in the Significant Impairment range. Prioritise "
+            message=f"{label} is in the Significant Impairment range. Prioritize "
                     f"intervention and referral for this area.",
             severity=REVIEW, audience=CLINICIAN,
             score_id=key, operator=">=", value=17,

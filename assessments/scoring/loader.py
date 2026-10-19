@@ -3,7 +3,7 @@
 Two paths, chosen per assessment:
 
 * A card has been written for it, so the card is used.
-* No card yet, so one is derived that reproduces the behaviour the assessment has
+* No card yet, so one is derived that reproduces the behavior the assessment has
   today. Nothing changes for anyone until a card is deliberately written.
 
 That second path is what makes this safe to deploy. Adding the engine does not
@@ -369,7 +369,7 @@ def card_for_assessment(assessment) -> ScoringCard:
     """The card to score this assessment with.
 
     Uses the written card when there is one, and otherwise derives one that
-    matches current behaviour.
+    matches current behavior.
     """
     scoring = getattr(assessment, "scoring", None)
     configuration = (getattr(scoring, "configuration", None) or {}) if scoring else {}

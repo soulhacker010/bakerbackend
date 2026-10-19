@@ -67,6 +67,9 @@ class Assessment(models.Model):
     age_range = models.CharField(max_length=120, blank=True)
     delivery_modes = models.JSONField(default=list, blank=True)
     clinician_notes = models.TextField(blank=True)
+    # The instrument's copyright or credit line, shown wherever the assessment
+    # or its results appear. The practice requires it for every reprinted screener.
+    copyright = models.TextField(blank=True)
 
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
     published_at = models.DateTimeField(blank=True, null=True)

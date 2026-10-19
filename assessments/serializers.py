@@ -169,6 +169,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
             "description",
             "highlights",
             "clinician_notes",
+            "copyright",
             "duration_minutes",
             "age_range",
             "delivery_modes",

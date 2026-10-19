@@ -124,6 +124,17 @@ class RespondentEndToEndTests(ThrottledAPITestCase):
         self.assertEqual(body["slug"], self.assessment.slug)
         self.assertEqual(len(body["questions"]), 2)
 
+    def test_respondent_sees_the_copyright_line(self):
+        # The practice requires every reprinted screener to credit its author.
+        self.assessment.copyright = "Copyright © 1998 by Evangelia Demerouti & Dieter Nachreiner."
+        self.assessment.save()
+        response = self.client.post(
+            reverse("assessments:respondent-link-assessment"),
+            data={"token": self._issue_token(), "assessment": self.assessment.slug},
+            format="json",
+        )
+        self.assertEqual(response.json()["copyright"], self.assessment.copyright)
+
     def test_respondent_can_submit_answers_and_clinician_sees_the_result(self):
         token = self._issue_token()
 

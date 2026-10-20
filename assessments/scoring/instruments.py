@@ -134,6 +134,7 @@ def phq9(questions: Sequence) -> ScoringCard:
 # --------------------------------------------------------------------------- #
 
 def gad7(questions: Sequence) -> ScoringCard:
+    # Level names are the practice's own wording (follow-up document, 16 Oct 2026).
     """Generalized Anxiety Disorder 7-item scale. Seven items on 0-3, total 0-21."""
     rules = _rules(questions, 7, "GAD-7")
     _check_scale(rules, 0, 3, "GAD-7")
@@ -144,12 +145,12 @@ def gad7(questions: Sequence) -> ScoringCard:
         questions=[r.identifier for r in rules],
         min_answered=7,
         bands=[
-            Band("minimal", "Minimal", 0, 4, "Minimal anxiety."),
-            Band("mild", "Mild", 5, 9, "Mild anxiety. Monitor."),
-            Band("moderate", "Moderate", 10, 14,
+            Band("minimal", "Minimal or no anxiety symptoms", 0, 4, "Minimal anxiety."),
+            Band("mild", "Mild anxiety symptoms (monitor)", 5, 9, "Mild anxiety. Monitor."),
+            Band("moderate", "Moderate anxiety symptoms", 10, 14,
                  "Moderate anxiety. Possible clinically significant condition; "
                  "further evaluation recommended."),
-            Band("severe", "Severe", 15, 21,
+            Band("severe", "Severe anxiety symptoms", 15, 21,
                  "Severe anxiety. Active treatment is probably warranted."),
         ],
     )

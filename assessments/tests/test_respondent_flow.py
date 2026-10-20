@@ -124,6 +124,20 @@ class RespondentEndToEndTests(ThrottledAPITestCase):
         self.assertEqual(body["slug"], self.assessment.slug)
         self.assertEqual(len(body["questions"]), 2)
 
+    def test_a_link_sent_before_unpublishing_still_works(self):
+        # Unpublishing stops new sends; it must not break a link already sent.
+        token = self._issue_token()
+        self.client.credentials()
+        self.assessment.status = Assessment.Status.DRAFT
+        self.assessment.save()
+        landing = self.client.post(reverse("assessments:respondent-link-resolve"),
+                                   data={"token": token}, format="json")
+        self.assertEqual(landing.status_code, status.HTTP_200_OK)
+        self.assertIn(self.assessment.slug, [a["slug"] for a in landing.json()["assessments"]])
+        page = self.client.post(reverse("assessments:respondent-link-assessment"),
+                                data={"token": token, "assessment": self.assessment.slug}, format="json")
+        self.assertEqual(page.status_code, status.HTTP_200_OK)
+
     def test_respondent_sees_the_copyright_line(self):
         # The practice requires every reprinted screener to credit its author.
         self.assessment.copyright = "Copyright © 1998 by Evangelia Demerouti & Dieter Nachreiner."

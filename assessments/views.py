@@ -539,8 +539,11 @@ class RespondentLinkResolveView(APIView):
 
     def _build_assessment_payload(self, link_payload):
         assessments = (
+            # Whatever the signed link names, whatever its status now. Links are
+            # checked when they are issued, so a draft can only appear here if it
+            # was unpublished after sending; unpublishing stops new sends, it must
+            # not break the ones already in a client's inbox.
             Assessment.objects.filter(slug__in=link_payload.assessments)
-            .filter(Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=link_payload.owner_id))
             .select_related("category")
         )
         # The invitation's own order, not the database's.
@@ -818,8 +821,9 @@ class RespondentAssessmentDetailView(APIView):
         if slug not in link_payload.assessments:
             return Response({"detail": "This assessment is not part of the invitation."}, status=status.HTTP_403_FORBIDDEN)
 
+        # Any status: see _build_assessment_payload. The slug is in the signed link.
         assessment = (
-            Assessment.objects.filter(slug=slug, status=Assessment.Status.PUBLISHED)
+            Assessment.objects.filter(slug=slug)
             .select_related("category")
             .prefetch_related("tags", "questions")
             .first()

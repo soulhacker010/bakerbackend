@@ -351,6 +351,15 @@ def _flags(
                 outcomes.append(flag.compare(value))
             fired = all(outcomes) if flag.match == "all" else any(outcomes)
 
+        elif flag.scores is not None:
+            # A score that could not be calculated counts towards nothing.
+            meeting = [
+                score_id for score_id in flag.scores
+                if (r := computed.get(score_id)) is not None and r.status == OK
+                and r.value is not None and flag.compare(r.value)
+            ]
+            fired = len(meeting) >= flag.at_least
+
         else:
             result = computed.get(flag.score_id)
             # A score that could not be calculated cannot raise or clear a flag.

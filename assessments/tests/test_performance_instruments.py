@@ -73,7 +73,12 @@ class SleepAndRecoveryTests(SimpleTestCase):
         result = score_assessment(self.card, self.answers([0] * 15, flags={17: "Yes"}))
         self.assertEqual(result.score("overall").value, 0)
         self.assertEqual(result.score("overall").band_id, "low")
-        self.assertEqual([f.id for f in result.flags], ["sleep-red-flag"])
+        # Each red flag raises its own alert, naming the item.
+        self.assertEqual([f.id for f in result.flags], ["sleep-red-flag-17"])
+
+    def test_two_red_flags_raise_two_alerts(self):
+        result = score_assessment(self.card, self.answers([0] * 15, flags={16: "Yes", 22: "Yes"}))
+        self.assertEqual(sorted(f.id for f in result.flags), ["sleep-red-flag-16", "sleep-red-flag-22"])
 
     def test_no_flag_when_every_red_flag_is_no(self):
         self.assertEqual(score_assessment(self.card, self.answers([3] * 15)).flags, [])
@@ -201,3 +206,35 @@ class MentalSkillsTests(SimpleTestCase):
     def test_the_wrong_number_of_questions_is_refused(self):
         with self.assertRaises(CardError):
             mental_skills(questions(39, ONE_FIVE))
+
+
+def free_text(identifier, order):
+    return AssessmentQuestion(identifier=identifier, order=order, text="notes",
+                              response_type=AssessmentQuestion.ResponseType.FREE_TEXT,
+                              config={}, domain="notes", required=False)
+
+
+class AuditFollowUpTests(SimpleTestCase):
+    """Items from the 20 Oct 2026 audit against the practice's documents."""
+
+    def test_executive_self_assessment_uses_the_organizational_report(self):
+        from assessments.scoring.card import ORGANISATIONAL
+        self.assertEqual(executive_self_assessment(questions(24, ONE_FIVE)).report_style, ORGANISATIONAL)
+
+    def test_executive_self_assessment_carries_justification_fields_unscored(self):
+        qs = questions(24, ONE_FIVE) + [free_text("goal_setting-justification", 25),
+                                        free_text("goal_setting-improvement", 26)]
+        card = executive_self_assessment(qs)
+        self.assertEqual({r.identifier for r in card.questions if not r.scored},
+                         {"goal_setting-justification", "goal_setting-improvement"})
+        answers = {f"q{i}": ONE_FIVE[4] for i in range(1, 25)}
+        answers["goal_setting-justification"] = "Set quarterly OKRs."
+        self.assertEqual(score_assessment(card, answers).score("total").value, 120)
+
+    def test_mental_skills_flags_two_or_more_domains_below_three(self):
+        card = mental_skills(questions(40, ONE_FIVE) + [free_text("open-question", 41)])
+        one_low = [2] * 5 + [4] * 35
+        two_low = [2] * 10 + [4] * 30
+        ans = lambda v: {f"q{i}": ONE_FIVE[x - 1] for i, x in enumerate(v, 1)}
+        self.assertEqual(score_assessment(card, ans(one_low)).flags, [])
+        self.assertEqual([f.id for f in score_assessment(card, ans(two_low)).flags], ["multiple-domains-below-3"])

@@ -280,7 +280,11 @@ def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
             message=str(entry.get("message") or ""),
             severity=str(entry.get("severity", "review")),
             audience=str(entry.get("audience", "clinician")),
-            questions=entry.get("questions"),
+            # An editor that knows only question and score flags sends an empty
+            # question list alongside a set of scores; the scores are what count.
+            questions=(entry.get("questions") or None) if entry.get("scores") else entry.get("questions"),
+            scores=entry.get("scores") or None,
+            at_least=int(entry.get("at_least", 1)),
             operator=str(entry.get("operator", ">=")),
             value=entry.get("value"),
             match=str(entry.get("match", "any")),
@@ -360,6 +364,8 @@ def card_to_dict(card: ScoringCard) -> Dict[str, Any]:
                 "value": f.value,
                 "match": f.match,
                 "score_id": f.score_id,
+                "scores": list(f.scores) if f.scores else None,
+                "at_least": f.at_least,
             }
             for f in card.flags
         ],

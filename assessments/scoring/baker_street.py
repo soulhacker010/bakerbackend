@@ -37,6 +37,25 @@ def _rules(questions: Sequence, expected: int, name: str) -> List[QuestionRule]:
     return [question_rule(q) for q in ordered]
 
 
+def _scored_and_notes(questions: Sequence):
+    """Split off the free-text questions that sit among an instrument's items.
+
+    Returns the scored questions, in order, and card rules for the rest. A card
+    must name every question on the assessment, so the free-text ones - the
+    Executive Self-Assessment's justification and improvement step, the Mental
+    Skills open question - are carried as collected but never scored.
+    """
+    ordered = sorted(questions, key=lambda q: getattr(q, "order", 0))
+    scored, notes = [], []
+    for q in ordered:
+        rule = question_rule(q)
+        if rule.scored:
+            scored.append(q)
+        else:
+            notes.append(QuestionRule(identifier=rule.identifier, domain="notes", scored=False))
+    return scored, notes
+
+
 def _sequential_domains(
     rules: List[QuestionRule],
     layout: Sequence[tuple],

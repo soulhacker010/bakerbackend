@@ -140,6 +140,11 @@ class CageAidTests(SimpleTestCase):
         ))
         self.card = cage_aid(questions)
 
+    def test_uses_the_brief_screening_report(self):
+        # The practice's 2026 spreadsheet: "Brief Screening Report".
+        from assessments.scoring.card import BRIEF
+        self.assertEqual(self.card.report_style, BRIEF)
+
     def answers(self, *values, substance="Alcohol"):
         payload = {f"cage_q{i}-2": YES_NO[v] for i, v in enumerate(values, 1)}
         payload["cage_q5-2"] = substance

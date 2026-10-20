@@ -212,6 +212,10 @@ class AssessmentResponse(models.Model):
     responses = models.JSONField(help_text="Raw responses keyed by question identifier.")
     highlights = models.JSONField(blank=True, default=list, help_text="Highlights derived from scoring.")
     score = models.JSONField(blank=True, default=dict, help_text="Calculated scoring payload including totals and bands.")
+    # The questions as the respondent saw them, so editing an assessment later
+    # never changes what a past result says was asked. The score is already
+    # stored as it was calculated on the day.
+    question_snapshot = models.JSONField(blank=True, default=list)
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

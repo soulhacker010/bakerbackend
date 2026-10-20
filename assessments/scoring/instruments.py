@@ -226,9 +226,11 @@ def cage_aid(questions: Sequence) -> ScoringCard:
                  "and warrants further assessment."),
         ],
     )
+    # Brief Screening Report, per the practice's 2026 spreadsheet.
     return ScoringCard(
         questions=rules,
         scores=[total],
+        report_style=BRIEF,
         flags=[
             FlagRule(
                 id="cage-positive",

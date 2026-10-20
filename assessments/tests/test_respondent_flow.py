@@ -189,6 +189,30 @@ class RespondentEndToEndTests(ThrottledAPITestCase):
         self.assertEqual(rows[0]["assessment_slug"], self.assessment.slug)
         self.assertEqual(rows[0]["client"]["slug"], self.client_record.slug)
 
+    def test_editing_a_question_later_does_not_change_a_past_result(self):
+        # Versioning: a result shows the wording the respondent answered.
+        token = self._issue_token()
+        self.client.post(
+            reverse("assessments:respondent-link-assessment-response"),
+            data={"token": token, "response": {
+                "assessment_slug": self.assessment.slug, "client_slug": self.client_record.slug,
+                "responses": [{"question_identifier": "sleep", "value": 3},
+                              {"question_identifier": "mood", "value": 4}]}},
+            format="json",
+        )
+        original = self.assessment.questions.get(identifier="sleep").text
+        self.assertTrue(AssessmentResponse.objects.get().question_snapshot)
+        question = self.assessment.questions.get(identifier="sleep")
+        question.text = "A reworded question"
+        question.save()
+
+        access = self._login()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        rows = self.client.get(reverse("assessments:assessment-response-list"),
+                               data={"client": self.client_record.slug}).json()
+        shown = {a["identifier"]: a["question"] for a in rows[0]["answers"]}
+        self.assertEqual(shown["sleep"], original)
+
     def test_clinician_can_administer_an_assessment_directly(self):
         """The in-session flow: the clinician records answers themselves."""
         access = self._login()

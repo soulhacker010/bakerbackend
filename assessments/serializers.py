@@ -542,6 +542,15 @@ class AssessmentSerializer(serializers.ModelSerializer):
             assessment.save(update_fields=["published_at"])
 
 
+
+def snapshot_questions(assessment) -> list:
+    """The questions as they stand now, recorded against a response."""
+    return [
+        {"identifier": q.identifier, "order": q.order, "text": q.text,
+         "response_type": q.response_type, "config": q.config if isinstance(q.config, dict) else {}}
+        for q in assessment.questions.all().order_by("order")
+    ]
+
 class AssessmentResponseSerializer(serializers.ModelSerializer):
     class ResponseItemSerializer(serializers.Serializer):
         question_identifier = serializers.CharField()
@@ -651,6 +660,7 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             responses=response_map,
             score=score_payload,
             highlights=highlights,
+            question_snapshot=snapshot_questions(assessment),
         )
 
         recipients: list = []
@@ -780,7 +790,18 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             string_value = self._stringify_answer(value)
             return [string_value] if string_value else []
 
-        questions = list(obj.assessment.questions.all().order_by("order"))
+        # The wording the respondent answered, where it was recorded; results
+        # from before snapshots fall back to the assessment as it is now.
+        snapshot = obj.question_snapshot if isinstance(obj.question_snapshot, list) else []
+        if snapshot:
+            questions = [
+                SimpleNamespace(pk=None, identifier=item.get("identifier", ""), order=item.get("order"),
+                                text=item.get("text", ""), response_type=item.get("response_type", ""),
+                                config=item.get("config") or {})
+                for item in snapshot
+            ]
+        else:
+            questions = list(obj.assessment.questions.all().order_by("order"))
         matched = self._match_stored_answers(questions, remaining_payload)
 
         for question in questions:

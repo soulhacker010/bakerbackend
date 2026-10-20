@@ -323,6 +323,10 @@ class FlagRule:
     match: str = "any"  # "any" | "all"
     # Score flags
     score_id: Optional[str] = None
+    # Count flags: fire when at least ``at_least`` of these scores meet the
+    # comparison - the Mental Skills "multiple domains below 3.0".
+    scores: Optional[Sequence[str]] = None
+    at_least: int = 1
 
     _OPS = {
         ">=": lambda a, b: a >= b,
@@ -333,9 +337,10 @@ class FlagRule:
     }
 
     def __post_init__(self) -> None:
-        if (self.questions is None) == (self.score_id is None):
+        watched = [w for w in (self.questions, self.score_id, self.scores) if w is not None]
+        if len(watched) != 1:
             raise CardError(
-                f"Flag {self.id!r} must watch either questions or one score, not both."
+                f"Flag {self.id!r} must watch exactly one of: questions, one score, or a set of scores."
             )
         if self.value is None:
             raise CardError(f"Flag {self.id!r} needs a value to compare against.")

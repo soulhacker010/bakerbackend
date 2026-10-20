@@ -9,11 +9,12 @@ from __future__ import annotations
 
 from typing import List, Sequence
 
-from .baker_street import _bands, _require_scale, _rules, _sequential_domains
+from .baker_street import _bands, _require_scale, _rules, _scored_and_notes, _sequential_domains
 from .card import (
     AVERAGE,
     CLINICIAN,
     INFO,
+    ORGANISATIONAL,
     REVIEW,
     SUM,
     CardError,
@@ -101,14 +102,24 @@ def sleep_and_recovery(questions: Sequence) -> ScoringCard:
         scores=sections + [overall],
         primary_score="overall",
         standing_notice=SLEEP_NOTICE,
-        flags=[FlagRule(
-            id="sleep-red-flag",
-            message="A red-flag item was answered yes. This may indicate the need for "
-                    "additional evaluation even when the overall score is relatively low.",
-            severity=REVIEW, audience=CLINICIAN,
-            questions=[rule.identifier for rule in red_flags],
-            operator="==", value="yes", match="any",
-        )],
+        # One flag per red-flag item, naming it, as the document has each raise
+        # its own flag: the clinician needs to know which concern was reported.
+        flags=[
+            FlagRule(
+                id=f"sleep-red-flag-{number}",
+                message=(f'Red flag answered yes (item {number}): "{text}". ' if text else
+                         f"Red flag item {number} was answered yes. ")
+                        + "This may indicate the need for additional evaluation even when "
+                          "the overall score is relatively low.",
+                severity=REVIEW, audience=CLINICIAN,
+                questions=[rule.identifier],
+                operator="==", value="yes", match="any",
+            )
+            for number, (rule, text) in enumerate(
+                ((rule, (getattr(q, "text", "") or "").strip()) for rule, q in zip(red_flags, ordered[15:])),
+                start=16,
+            )
+        ],
     )
 
 
@@ -128,8 +139,9 @@ def executive_self_assessment(questions: Sequence) -> ScoringCard:
     dimension. Those are free-text fields on the assessment, not scored items, and
     are not represented on the card.
     """
+    scored_questions, notes = _scored_and_notes(questions)
     rules = _sequential_domains(
-        _rules(questions, 24, "Executive Self-Assessment"),
+        _rules(scored_questions, 24, "Executive Self-Assessment"),
         [("goal_setting", 3), ("productivity", 3), ("mindset", 3), ("focus", 3),
          ("delegation", 3), ("time_management", 3), ("health", 3), ("self_monitoring", 3)],
     )
@@ -171,7 +183,9 @@ def executive_self_assessment(questions: Sequence) -> ScoringCard:
         ),
     )
 
-    return ScoringCard(questions=rules, scores=sections + [total], primary_score="total")
+    # Organizational Development, per the practice's 2026 spreadsheet.
+    return ScoringCard(questions=rules + notes, scores=sections + [total], primary_score="total",
+                       report_style=ORGANISATIONAL)
 
 
 def mental_skills(questions: Sequence) -> ScoringCard:
@@ -193,8 +207,9 @@ def mental_skills(questions: Sequence) -> ScoringCard:
     points or more. That needs the observer module, which is a separate short form
     and awaits a decision on how the two are paired.
     """
+    scored_questions, notes = _scored_and_notes(questions)
     rules = _sequential_domains(
-        _rules(questions, 40, "Mental Skills"),
+        _rules(scored_questions, 40, "Mental Skills"),
         [(f"domain{i}", 5) for i in range(1, 9)],
     )
     _require_scale(rules, 1, 5, "Mental Skills")
@@ -237,9 +252,16 @@ def mental_skills(questions: Sequence) -> ScoringCard:
     )
 
     return ScoringCard(
-        questions=rules,
+        questions=rules + notes,
         scores=sections + [overall],
         primary_score="overall",
+        flags=[FlagRule(
+            id="multiple-domains-below-3",
+            message="Multiple domains are below 3.0. Prioritize foundational work "
+                    "(often emotional control, focus, or recovery first).",
+            severity=REVIEW, audience=CLINICIAN,
+            scores=[f"domain{i}" for i in range(1, 9)], operator="<", value=3.0, at_least=2,
+        )],
     )
 
 

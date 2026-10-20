@@ -92,10 +92,11 @@ def _validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> Lis
     if not slugs:
         raise RespondentLinkError("At least one assessment must be selected.")
 
+    # Published only, for everyone. An unpublished assessment may be awaiting
+    # copyright permission (the practice hid CAGE-AID and WHO-5 for exactly that),
+    # so even its author must not be able to send it to a client.
     assessments = list(
-        Assessment.objects.filter(slug__in=slugs).filter(
-            Q(status=Assessment.Status.PUBLISHED) | Q(created_by_id=owner_id)
-        )
+        Assessment.objects.filter(slug__in=slugs, status=Assessment.Status.PUBLISHED)
     )
     found_slugs = {assessment.slug for assessment in assessments}
     missing = [slug for slug in slugs if slug not in found_slugs]

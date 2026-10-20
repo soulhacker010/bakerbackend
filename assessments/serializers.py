@@ -1069,10 +1069,9 @@ class AssessmentBundleSerializer(serializers.ModelSerializer):
         sendable, unavailable = [], 0
         for item in instance.items.all():
             assessment = item.assessment
-            # The same rule an invitation is checked against when it is issued.
-            if assessment.status == Assessment.Status.PUBLISHED or (
-                user is not None and assessment.created_by_id == getattr(user, "id", None)
-            ):
+            # The same rule an invitation is checked against when it is issued:
+            # published only, whoever is reading.
+            if assessment.status == Assessment.Status.PUBLISHED:
                 sendable.append({"slug": assessment.slug, "title": assessment.title})
             else:
                 unavailable += 1

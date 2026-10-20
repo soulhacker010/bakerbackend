@@ -239,3 +239,23 @@ class AssessmentBundleTests(ThrottledAPITestCase):
         ).json()
         self.assertEqual([a["slug"] for a in resolved["assessments"]],
                          ["who-5", "pc-ptsd-5", "olbi"])
+
+
+class HiddenMeansHiddenTests(AssessmentBundleTests):
+    """An unpublished assessment may be awaiting copyright permission, so not even
+    its author can send it (the practice hid CAGE-AID and WHO-5 on 20 Oct 2026)."""
+
+    def test_a_bundle_leaves_out_a_hidden_assessment_even_for_its_author(self):
+        bundle = self.create(user=self.admin).json()
+        Assessment.objects.filter(slug="who-5").update(status=Assessment.Status.DRAFT)
+        self.as_user(self.admin)
+        listed = self.client.get(reverse(LIST)).json()
+        row = next(b for b in (listed["results"] if isinstance(listed, dict) else listed) if b["id"] == bundle["id"])
+        self.assertNotIn("who-5", [a["slug"] for a in row["assessments"]])
+        self.assertEqual(row["unavailable_count"], 1)
+
+    def test_its_author_cannot_send_it_in_a_new_link(self):
+        from assessments.respondent_links import RespondentLinkError, issue_link_token
+        with self.assertRaises(RespondentLinkError):
+            issue_link_token(owner_id=self.admin.id, assessments=["draft-thing"], mode="self-entry",
+                             client_slug=None, share_results=False)

@@ -50,6 +50,11 @@ class QuestionRule:
     # "Moderate (2)" or "0 - Never". This maps every form an answer may arrive in
     # to the value it carries, so nothing has to be guessed at scoring time.
     options: Optional[Dict[str, float]] = None
+    # Another question whose answer this one is multiplied by. The EF Adults and
+    # Adolescents (EFA-Revised) rates each item twice, how often and how severe,
+    # and scores the item as frequency x severity. The frequency question names
+    # its severity partner here; an item counts only once both are answered.
+    multiply_by: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.reverse and self.scale_max is None:
@@ -258,6 +263,9 @@ class ScoreRule:
     positive_at: Optional[int] = None
     # A question that can close this score outright. See GateRule.
     gate: Optional[GateRule] = None
+    # Sum the answers as given, without multiplying paired items. Used for the
+    # EFA-Revised's separate frequency total.
+    ignore_pairing: bool = False
 
     def __post_init__(self) -> None:
         sources = [s for s in (self.domain, self.questions, self.scores) if s is not None]
@@ -379,6 +387,12 @@ class ScoringCard:
             if question.identifier in seen:
                 raise CardError(f"Question {question.identifier!r} appears twice.")
             seen.add(question.identifier)
+        for question in self.questions:
+            if question.multiply_by is not None and question.multiply_by not in seen:
+                raise CardError(
+                    f"Question {question.identifier!r} is multiplied by unknown question "
+                    f"{question.multiply_by!r}."
+                )
 
         score_ids = set()
         for score in self.scores:

@@ -244,6 +244,7 @@ def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
             qualifying_values=(frozenset(str(v) for v in qualifying) if qualifying else None),
             options=({str(k): float(v) for k, v in entry["options"].items()}
                      if entry.get("options") else None),
+            multiply_by=(str(entry["multiply_by"]) if entry.get("multiply_by") else None),
         ))
 
     scores = []
@@ -269,6 +270,7 @@ def card_from_dict(data: Mapping[str, Any]) -> ScoringCard:
             granularity=float(entry.get("granularity", 1.0)),
             positive_at=(int(entry["positive_at"]) if entry.get("positive_at") is not None else None),
             gate=_gate_from(entry.get("gate")),
+            ignore_pairing=bool(entry.get("ignore_pairing", False)),
         ))
 
     flags = []
@@ -310,6 +312,7 @@ def card_to_dict(card: ScoringCard) -> Dict[str, Any]:
                 "allow_na": q.allow_na,
                 "qualifying_values": sorted(q.qualifying_values) if q.qualifying_values else None,
                 "options": dict(q.options) if q.options else None,
+                "multiply_by": q.multiply_by,
             }
             for q in card.questions
         ],
@@ -342,6 +345,7 @@ def card_to_dict(card: ScoringCard) -> Dict[str, Any]:
                     "opens_at": s.gate.opens_at,
                     "closed_value": s.gate.closed_value,
                 } if s.gate else None),
+                "ignore_pairing": s.ignore_pairing,
             }
             for s in card.scores
         ],

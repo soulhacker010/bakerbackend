@@ -226,9 +226,19 @@ def _from_questions(
             # cannot quietly drag a total down.
             continue
 
+        contribution, maximum = rule.contribution(value), rule.max_contribution()
+        if rule.multiply_by is not None and not score.ignore_pairing:
+            partner = card.question(rule.multiply_by)
+            partner_raw = answers.get(rule.multiply_by, None)
+            partner_value = None if is_na(partner_raw) else partner.value_of(partner_raw)
+            if partner_value is None:
+                continue  # half an item is not an item
+            contribution *= partner.contribution(partner_value)
+            maximum *= partner.max_contribution()
+
         result.answered += 1
-        contributions.append(rule.contribution(value))
-        maxima.append(rule.max_contribution())
+        contributions.append(contribution)
+        maxima.append(maximum)
 
     if result.answered < score.min_answered:
         result.status = INSUFFICIENT_DATA

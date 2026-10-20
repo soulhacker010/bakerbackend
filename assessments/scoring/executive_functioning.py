@@ -21,6 +21,7 @@ from .card import (
     QuestionRule,
     ScoreRule,
     ScoringCard,
+    Transform,
 )
 
 DOMAINS = [
@@ -355,9 +356,124 @@ def ef_ages_3_10(questions: Sequence) -> ScoringCard:
     return ScoringCard(questions=rules, scores=sections + [total], primary_score="total")
 
 
+# EFA-Revised: Inhibitory Control and Emotional Regulation are weighted x1.5.
+EFA_REVISED_WEIGHTS = {"inhibitory_control": 1.5, "emotional_regulation": 1.5}
+SEVERITY_SUFFIX = "_sev"
+
+
+def ef_revised(questions: Sequence) -> ScoringCard:
+    """Executive Functioning Assessment for Adults and Adolescents (EFA-Revised).
+
+    Thirty items, each rated twice: how often, 0-4, and how severe, 0-2. An item
+    scores frequency x severity (0-8), so a section of six runs 0-48. Inhibitory
+    Control and Emotional Regulation are then weighted x1.5 (0-72), and the total
+    of the five weighted sections runs 0-288. Joe chose this format on
+    20 October 2026, replacing the separate Frequency Only and Severity Scale
+    versions.
+
+    Each item is stored as two questions: ``qN`` (how often) names its severity
+    partner ``qN_sev`` through ``multiply_by``. The frequency and severity totals
+    are also reported on their own, as Joe asked for both at the end.
+
+    Section thresholds are the document's own, pending normative data: 10 or
+    under is minimal; 35 or more (50 or more for the weighted sections) is
+    significant. The document gives no numbers for the total, only that it be
+    split into three levels, so it is split into equal thirds of 0-288.
+    """
+    ordered = sorted(questions, key=lambda q: getattr(q, "order", 0))
+    if len(ordered) != 60:
+        raise CardError(f"EFA-Revised expects 60 questions (30 items x 2) but has {len(ordered)}.")
+    from .loader import question_rule
+    base = {q.identifier: question_rule(q) for q in ordered}
+    frequency = [q for q in ordered if not q.identifier.endswith(SEVERITY_SUFFIX)]
+    if len(frequency) != 30:
+        raise CardError("EFA-Revised needs 30 frequency questions and 30 severity partners.")
+    key_of = {label: key for key, label in SEVERITY_SECTIONS}
+
+    rules = []
+    for q in frequency:
+        partner = q.identifier + SEVERITY_SUFFIX
+        if partner not in base:
+            raise CardError(f"EFA-Revised item {q.identifier!r} has no severity question {partner!r}.")
+        domain = key_of.get(q.domain, q.domain)
+        if domain not in EFA_REVISED_WEIGHTS and domain not in key_of.values():
+            raise CardError(f"EFA-Revised item {q.identifier!r} is in unknown section {q.domain!r}.")
+        f, sv = base[q.identifier], base[partner]
+        if (f.scale_min, f.scale_max) != (0, 4) or (sv.scale_min, sv.scale_max) != (0, 2):
+            raise CardError("EFA-Revised rates how often 0-4 and how severe 0-2.")
+        rules.append(QuestionRule(identifier=f.identifier, domain=domain, scale_min=0, scale_max=4,
+                                  options=f.options, multiply_by=partner))
+        rules.append(QuestionRule(identifier=partner, domain="severity", scale_min=0, scale_max=2,
+                                  options=sv.options))
+
+    def section(key, label):
+        weight = EFA_REVISED_WEIGHTS.get(key, 1.0)
+        top = 48 * weight
+        significant = 50 if weight > 1 else 35
+        step = 1.5 if weight > 1 else 1.0
+        return ScoreRule(
+            id=key, label=label + (" (weighted x1.5)" if weight > 1 else ""), domain=key,
+            min_answered=6, granularity=step, precision=1,
+            transform=Transform(kind="linear", multiply=weight) if weight > 1 else None,
+            bands=_bands(
+                ("minimal", "Minimal concerns", 0, 10, "Within the minimal range."),
+                ("moderate", "Moderate concerns", 10 + step / 3 if weight > 1 else 11,
+                 significant - (0.5 if weight > 1 else 1), "Some difficulty; monitor this area."),
+                ("significant", "Significant impairment", significant, top,
+                 "Significant impairment; prioritize intervention."),
+            ),
+        )
+
+    sections = [section(key, label) for key, label in SEVERITY_SECTIONS]
+    total = ScoreRule(
+        id="total", label="Total Score (weighted)",
+        scores=[key for key, _ in SEVERITY_SECTIONS], min_answered=5,
+        granularity=0.5, precision=1,
+        bands=_bands(
+            ("minimal", "Minimal executive functioning difficulties", 0, 95.5,
+             "Minimal executive functioning difficulties."),
+            ("mild-moderate", "Mild to moderate difficulties", 96, 191.5,
+             "Mild to moderate difficulties; consider monitoring or intervention."),
+            ("significant", "Significant difficulties", 192, 288,
+             "Significant difficulties; recommend comprehensive neuropsychological evaluation."),
+        ),
+    )
+    frequency_total = ScoreRule(
+        id="frequency_total", label="Frequency Total (how often)",
+        questions=[q.identifier for q in frequency], ignore_pairing=True, min_answered=30,
+    )
+    severity_total = ScoreRule(
+        id="severity_total", label="Severity Total (how severe)", domain="severity", min_answered=30,
+    )
+
+    flags = [
+        FlagRule(
+            id=f"{key}-significant",
+            message=f"{label} is in the Significant Impairment range. Prioritize intervention "
+                    f"for this area.",
+            severity=REVIEW, audience=CLINICIAN,
+            score_id=key, operator=">=", value=50 if key in EFA_REVISED_WEIGHTS else 35,
+        )
+        for key, label in SEVERITY_SECTIONS
+    ]
+
+    return ScoringCard(
+        questions=rules,
+        scores=sections + [total, frequency_total, severity_total],
+        flags=flags,
+        primary_score="total",
+        standing_notice=(
+            "Each item is scored as how often (0-4) x how severe (0-2). Inhibitory Control and "
+            "Emotional Regulation are weighted x1.5. Thresholds are provisional, pending normative "
+            "data. Read the profile across sections to see strengths and areas of concern."
+        ),
+    )
+
+
 BUILDERS = {
     "efaa": efaa,
     "ef_severity_scale": ef_severity_scale,
     "ef_adults_adolescents": ef_adults_adolescents,
     "ef_ages_3_10": ef_ages_3_10,
+    "ef_revised": ef_revised,
 }

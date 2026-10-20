@@ -53,6 +53,13 @@ def _question_range(card: ScoringCard, score: ScoreRule) -> Optional[Tuple[float
 
     lows = [r.min_contribution() for r in rules]
     highs = [r.max_contribution() for r in rules]
+    if not score.ignore_pairing:
+        # A paired item scores as the product of its two answers, all non-negative.
+        for i, r in enumerate(rules):
+            if r.multiply_by is not None:
+                partner = card.question(r.multiply_by)
+                lows[i] *= partner.min_contribution()
+                highs[i] *= partner.max_contribution()
     any_na = any(r.allow_na for r in rules)
 
     if score.method == AVERAGE:

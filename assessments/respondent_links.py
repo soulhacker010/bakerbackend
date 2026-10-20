@@ -38,6 +38,12 @@ class RespondentLinkPayload:
     uses: int = 0
     expires_at: Optional[datetime] = None
     completed: Tuple[str, ...] = ()
+    # Who the link is for when it is not the client: "informant1" or
+    # "informant2", the parent, coach or other rater saved on the client's
+    # record. Their result is labelled with it, so a parent's and a clinician's
+    # ratings of the same child can be read side by side.
+    rater: str = ""
+    rater_name: str = ""
 
 
 class RespondentLinkError(Exception):
@@ -54,6 +60,9 @@ def _serialise_payload(payload: RespondentLinkPayload) -> str:
         "pending": payload.pending_client,
         "nonce": payload.nonce,
     }
+    if payload.rater:
+        data["rater"] = payload.rater
+        data["rater_name"] = payload.rater_name
     return signing.dumps(data, salt=RESPONDENT_LINK_SALT)
 
 
@@ -73,6 +82,8 @@ def _deserialise_payload(token: str, *, max_age: int | None = RESPONDENT_LINK_MA
         share_results = bool(data.get("share"))
         pending_client = bool(data.get("pending"))
         nonce = str(data.get("nonce"))
+        rater = str(data.get("rater") or "")
+        rater_name = str(data.get("rater_name") or "")
     except (KeyError, TypeError, ValueError) as exc:
         raise RespondentLinkError("The respondent link payload is malformed.") from exc
 
@@ -84,7 +95,27 @@ def _deserialise_payload(token: str, *, max_age: int | None = RESPONDENT_LINK_MA
         share_results=share_results,
         pending_client=pending_client,
         nonce=nonce,
+        rater=rater,
+        rater_name=rater_name,
     )
+
+
+RATERS = {"informant1", "informant2"}
+
+
+def rater_for(client: Client | None, rater: str | None) -> Tuple[str, str]:
+    """The rater a link is for, with their name from the client's record."""
+    rater = (rater or "").strip()
+    if not rater or rater == "client":
+        return "", ""
+    if rater not in RATERS:
+        raise RespondentLinkError("Unknown rater.")
+    if client is None:
+        raise RespondentLinkError("A link for an informant needs the client it is about.")
+    name = (getattr(client, f"{rater}_name", "") or "").strip()
+    if not name:
+        raise RespondentLinkError("That informant is not on the client's record.")
+    return rater, name
 
 
 def _validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> List[Assessment]:
@@ -162,6 +193,7 @@ def issue_link_token(
     valid_from: datetime | None = None,
     expires_at: datetime | None = None,
     max_uses: int | None = None,
+    rater: str | None = None,
 ) -> str:
     assessments = _validate_assessments(owner_id, assessments)
 
@@ -187,6 +219,11 @@ def issue_link_token(
         pending_client = True
         resolved_client_slug = client_slug or None
 
+    rater_client = client or (
+        Client.objects.filter(owner_id=owner_id, slug=resolved_client_slug).first() if resolved_client_slug else None
+    )
+    rater_key, rater_name = rater_for(rater_client, rater)
+
     payload = RespondentLinkPayload(
         owner_id=owner_id,
         assessments=[assessment.slug for assessment in assessments],
@@ -195,6 +232,8 @@ def issue_link_token(
         share_results=share_results,
         pending_client=pending_client,
         nonce=secrets.token_urlsafe(8),
+        rater=rater_key,
+        rater_name=rater_name,
     )
 
     token = _serialise_payload(payload)
@@ -224,6 +263,8 @@ def refresh_token_for_client(payload: RespondentLinkPayload, *, client_slug: str
         share_results=payload.share_results,
         pending_client=False,
         nonce=secrets.token_urlsafe(8),
+        rater=payload.rater,
+        rater_name=payload.rater_name,
     )
 
     token = _serialise_payload(refreshed_payload)

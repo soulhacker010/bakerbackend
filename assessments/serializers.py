@@ -604,8 +604,11 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             "highlights",
             "submitted_at",
             "answers",
+            "rater_role",
+            "rater_name",
         )
-        read_only_fields = ("id", "client", "score", "highlights", "submitted_at", "answers")
+        read_only_fields = ("id", "client", "score", "highlights", "submitted_at", "answers",
+                            "rater_role", "rater_name")
 
     def validate_responses(self, value: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         identifiers = set()
@@ -661,6 +664,11 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             score=score_payload,
             highlights=highlights,
             question_snapshot=snapshot_questions(assessment),
+            # A signed-in clinician recording answers is the rater; a respondent
+            # link sets its own rater after saving.
+            rater_role="clinician" if submitted_by else "client",
+            rater_name=(" ".join(filter(None, [submitted_by.first_name, submitted_by.last_name])) or submitted_by.email)
+            if submitted_by else "",
         )
 
         recipients: list = []

@@ -305,3 +305,58 @@ class RespondentEndToEndTests(ThrottledAPITestCase):
         stored = AssessmentResponse.objects.get(pk=response.json()["id"])
         self.assertIn(directive, str(stored.score))
         self.assertIn(directive, " ".join(stored.highlights))
+
+
+class SecondRaterTests(RespondentEndToEndTests):
+    """A parent or coach on the client's record gets their own link (Joe, 20 Oct 2026)."""
+
+    def setUp(self):
+        super().setUp()
+        self.client_record.informant1_name = "Pat Doe"
+        self.client_record.informant1_email = "pat@example.com"
+        self.client_record.save()
+
+    def _issue(self, rater):
+        access = self._login()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        return self.client.post(reverse("assessments:respondent-link-issue"), data={
+            "assessments": [self.assessment.slug], "mode": "linked",
+            "clientSlug": self.client_record.slug, "rater": rater}, format="json")
+
+    def test_an_informants_result_is_labelled_as_theirs(self):
+        token = self._issue("informant1").json()["token"]
+        self.client.credentials()
+        self.client.post(reverse("assessments:respondent-link-assessment-response"), data={
+            "token": token, "response": {"assessment_slug": self.assessment.slug,
+                                         "client_slug": self.client_record.slug,
+                                         "responses": [{"question_identifier": "sleep", "value": 3},
+                                                       {"question_identifier": "mood", "value": 4}]}},
+            format="json")
+        stored = AssessmentResponse.objects.get()
+        self.assertEqual((stored.rater_role, stored.rater_name), ("informant1", "Pat Doe"))
+
+    def test_the_clients_own_result_is_labelled_client(self):
+        token = self._issue_token()
+        self.client.credentials()
+        self.client.post(reverse("assessments:respondent-link-assessment-response"), data={
+            "token": token, "response": {"assessment_slug": self.assessment.slug,
+                                         "client_slug": self.client_record.slug,
+                                         "responses": [{"question_identifier": "sleep", "value": 3},
+                                                       {"question_identifier": "mood", "value": 4}]}},
+            format="json")
+        self.assertEqual(AssessmentResponse.objects.get().rater_role, "client")
+
+    def test_an_informant_not_on_the_record_is_refused(self):
+        self.assertEqual(self._issue("informant2").status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_the_email_goes_to_the_informant(self):
+        from unittest.mock import patch
+        access = self._login()
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
+        with patch("assessments.views.send_assessment_invite_email") as send:
+            response = self.client.post(reverse("assessments:respondent-link-email"), data={
+                "assessments": [self.assessment.slug], "clientSlug": self.client_record.slug,
+                "rater": "informant1", "email": {"subject": "Please rate Jordan", "message": "Thanks"}},
+                format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        self.assertEqual(send.call_args[0][0].client_email, "pat@example.com")

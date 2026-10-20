@@ -238,3 +238,20 @@ class AuditFollowUpTests(SimpleTestCase):
         ans = lambda v: {f"q{i}": ONE_FIVE[x - 1] for i, x in enumerate(v, 1)}
         self.assertEqual(score_assessment(card, ans(one_low)).flags, [])
         self.assertEqual([f.id for f in score_assessment(card, ans(two_low)).flags], ["multiple-domains-below-3"])
+
+
+class MentalSkillsObserverTests(SimpleTestCase):
+    def setUp(self):
+        from assessments.scoring.performance import mental_skills_observer
+        self.card = mental_skills_observer(questions(8, ONE_FIVE) + [free_text("observation-context", 9)])
+
+    def test_card_is_sound_and_uses_the_screeners_domain_ids(self):
+        self.assertEqual([p for p in validate_card(self.card) if p.severity == ERROR], [])
+        self.assertEqual([s.id for s in self.card.scores], [f"domain{i}" for i in range(1, 9)] + ["overall"])
+
+    def test_each_item_is_its_domains_score(self):
+        values = [5, 1, 3, 4, 2, 5, 4, 3]
+        result = score_assessment(self.card, {f"q{i}": ONE_FIVE[v - 1] for i, v in enumerate(values, 1)})
+        self.assertEqual([result.score(f"domain{i}").value for i in range(1, 9)], values)
+        self.assertEqual(result.score("overall").value, 3.38)
+        self.assertEqual(result.score("domain2").band_id, "growth")

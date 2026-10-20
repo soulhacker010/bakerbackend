@@ -167,6 +167,7 @@ class RespondentLinkIssueView(APIView):
                 mode=mode,
                 client_slug=client_slug,
                 share_results=share_results,
+                rater=payload.get("rater"),
             )
         except RespondentLinkError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -199,8 +200,18 @@ class RespondentLinkEmailInviteView(APIView):
         if client is None:
             return Response({"detail": "Client could not be found for this clinician."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not client.email:
-            return Response({"detail": "Client does not have an email address on file."}, status=status.HTTP_400_BAD_REQUEST)
+        # Sent to the client, or to an informant on their record (a parent or a
+        # coach rating the same client), whose result is then labelled as theirs.
+        rater = str(payload.get("rater") or "").strip()
+        if rater in ("informant1", "informant2"):
+            recipient = (getattr(client, f"{rater}_email", "") or "").strip()
+            if not recipient:
+                return Response({"detail": "That informant does not have an email address on file."},
+                                status=status.HTTP_400_BAD_REQUEST)
+        else:
+            recipient = client.email
+            if not recipient:
+                return Response({"detail": "Client does not have an email address on file."}, status=status.HTTP_400_BAD_REQUEST)
 
         share_results = bool(payload.get("shareResults") or payload.get("share_results"))
 
@@ -224,6 +235,7 @@ class RespondentLinkEmailInviteView(APIView):
                 mode="linked",
                 client_slug=client.slug,
                 share_results=share_results,
+                rater=rater,
             )
         except RespondentLinkError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
@@ -237,7 +249,7 @@ class RespondentLinkEmailInviteView(APIView):
                     message=message,
                     include_consent=include_consent,
                     invite_url=invite_url,
-                    client_email=client.email,
+                    client_email=recipient,
                     reply_to=reply_to or None,
                 )
             )
@@ -879,6 +891,10 @@ class RespondentAssessmentResponseView(APIView):
                 return Response({"detail": "Complete your details before starting the assessment."}, status=status.HTTP_403_FORBIDDEN)
 
         instance = serializer.save()
+        if link_payload.rater:
+            instance.rater_role = link_payload.rater
+            instance.rater_name = link_payload.rater_name
+            instance.save(update_fields=["rater_role", "rater_name"])
 
         mark_invite_used(token, assessment_slug)
 

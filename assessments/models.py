@@ -216,6 +216,10 @@ class AssessmentResponse(models.Model):
     # never changes what a past result says was asked. The score is already
     # stored as it was calculated on the day.
     question_snapshot = models.JSONField(blank=True, default=list)
+    # Who completed it: "client", "clinician", or "informant1"/"informant2" (a
+    # parent, coach or other rater named on the client's record).
+    rater_role = models.CharField(max_length=20, blank=True, default="")
+    rater_name = models.CharField(max_length=150, blank=True, default="")
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

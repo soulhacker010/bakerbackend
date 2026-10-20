@@ -265,6 +265,59 @@ def mental_skills(questions: Sequence) -> ScoringCard:
     )
 
 
+MENTAL_SKILLS_LABELS = [
+    "Game Keys and Performance Routines",
+    "Self-Awareness and Emotional Control",
+    "Grit, Resilience and Growth Mindset",
+    "Coachability and Trust",
+    "Controllables Framework and Focal Control",
+    "Self-Care and Recovery",
+    "Confidence and Playing Big",
+    "Tactical Adjustments and Team Orientation",
+]
+
+
+def mental_skills_observer(questions: Sequence) -> ScoringCard:
+    """Mental Skills Screener, Optional Brief Observer Module (8 items).
+
+    A coach or rater observes the athlete and rates one behavior per domain on
+    the screener's 1-5 scale. "Observer Score (if completed) = Single rating for
+    that domain", so each item is its domain's score, under the same ids and
+    bands as the self-report screener: the two are compared domain by domain on
+    the client's page, and a gap of 1.5 points or more is flagged there ("Large
+    self-observer discrepancy"). The rater's name and observation context are
+    collected as notes.
+    """
+    scored_questions, notes = _scored_and_notes(questions)
+    rules = _sequential_domains(
+        _rules(scored_questions, 8, "Mental Skills observer"),
+        [(f"domain{i}", 1) for i in range(1, 9)],
+    )
+    _require_scale(rules, 1, 5, "Mental Skills observer")
+    bands = lambda: _bands(
+        ("growth", "Priority growth area", 1.0, 2.99, "A priority area for development."),
+        ("developing", "Developing", 3.0, 3.99, "Targeted training recommended."),
+        ("strength", "Strength", 4.0, 5.0, "A strength to maintain and leverage."),
+    )
+    sections = [
+        ScoreRule(id=f"domain{i}", label=MENTAL_SKILLS_LABELS[i - 1], domain=f"domain{i}",
+                  method=AVERAGE, min_answered=1, granularity=1.0, precision=2, bands=bands())
+        for i in range(1, 9)
+    ]
+    overall = ScoreRule(
+        id="overall", label="Overall Mental Skills Index (observer)",
+        scores=[f"domain{i}" for i in range(1, 9)], method=AVERAGE, min_answered=8,
+        granularity=0.125, precision=2, bands=bands(),
+    )
+    return ScoringCard(
+        questions=rules + notes,
+        scores=sections + [overall],
+        primary_score="overall",
+        standing_notice="Observer ratings. Compare with the athlete's own Mental Skills Screener on the "
+                        "client's page; a gap of 1.5 points or more in a domain is worth discussing.",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Return-to-Play Readiness Screener
 # --------------------------------------------------------------------------- #
@@ -468,6 +521,7 @@ def return_to_play(questions: Sequence) -> ScoringCard:
 
 
 BUILDERS = {
+    "mental_skills_observer": mental_skills_observer,
     "return_to_play": return_to_play,
     "sleep_and_recovery": sleep_and_recovery,
     "executive_self_assessment": executive_self_assessment,

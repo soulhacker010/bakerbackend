@@ -377,8 +377,10 @@ def ef_revised(questions: Sequence) -> ScoringCard:
 
     Section thresholds are the document's own, pending normative data: 10 or
     under is minimal; 35 or more (50 or more for the weighted sections) is
-    significant. The document gives no numbers for the total, only that it be
-    split into three levels, so it is split into equal thirds of 0-288.
+    significant. For the total, Joe chose (21 Oct 2026) the levels that line up with
+    those section cut-offs: "Minimal 0-50, Mild to moderate 51-204, Significant
+    205+". Totals move in half points, and by his rule a score stays in the lower
+    level until it reaches the next one's start, so 50.5 reads Minimal.
     """
     ordered = sorted(questions, key=lambda q: getattr(q, "order", 0))
     if len(ordered) != 60:
@@ -430,11 +432,11 @@ def ef_revised(questions: Sequence) -> ScoringCard:
         scores=[key for key, _ in SEVERITY_SECTIONS], min_answered=5,
         granularity=0.5, precision=1,
         bands=_bands(
-            ("minimal", "Minimal executive functioning difficulties", 0, 95.5,
+            ("minimal", "Minimal executive functioning difficulties", 0, 50.5,
              "Minimal executive functioning difficulties."),
-            ("mild-moderate", "Mild to moderate difficulties", 96, 191.5,
+            ("mild-moderate", "Mild to moderate difficulties", 51, 204.5,
              "Mild to moderate difficulties; consider monitoring or intervention."),
-            ("significant", "Significant difficulties", 192, 288,
+            ("significant", "Significant difficulties", 205, 288,
              "Significant difficulties; recommend comprehensive neuropsychological evaluation."),
         ),
     )

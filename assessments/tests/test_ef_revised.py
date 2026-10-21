@@ -95,13 +95,25 @@ class EfRevisedTests(SimpleTestCase):
         self.assertEqual(result.score("frequency_total").value, 120)
 
     def test_total_cut_offs(self):
-        # 2 x 1 on every item: 12 per section; IC and ER weighted to 18. Total 72.
+        # Joe, 21 Oct 2026: "Minimal 0-50, Mild to moderate 51-204, Significant 205+".
+        # 1 x 1 on every item: 6 per section, IC and ER weighted to 9. Total 36.
+        self.assertEqual(self.score(lambda n: 1, lambda n: 1).score("total").band_id, "minimal")
+        # 2 x 1 everywhere: 12 per section, 18 weighted. Total 72: mild to moderate.
         result = self.score(lambda n: 2, lambda n: 1)
         self.assertEqual(result.score("total").value, 72)
-        self.assertEqual(result.score("total").band_id, "minimal")
-        # 4 x 1 everywhere: 24 per section, 36 weighted. Total 144: mild to moderate.
-        result = self.score(lambda n: 4, lambda n: 1)
-        self.assertEqual(result.score("total").value, 144)
+        self.assertEqual(result.score("total").band_id, "mild-moderate")
+        # 4 x 2 everywhere but IC and ER at 4 x 1: 48 x 3 + 36 x 2 = 216. Significant.
+        ic_er = {4, 10, 12, 14, 20, 24, 2, 8, 13, 17, 26, 30}
+        result = self.score(lambda n: 4, lambda n: 1 if n in ic_er else 2)
+        self.assertEqual(result.score("total").value, 216)
+        self.assertEqual(result.score("total").band_id, "significant")
+
+    def test_all_moderate_sections_no_longer_read_minimal(self):
+        # The reason for choosing these levels: a moderate profile reads moderate.
+        result = self.score(lambda n: 2, lambda n: 1)
+        self.assertTrue(all(result.score(k).band_id == "moderate" for k in
+                            ("working_memory", "inhibitory_control", "cognitive_flexibility",
+                             "emotional_regulation", "planning_organization")))
         self.assertEqual(result.score("total").band_id, "mild-moderate")
 
     def test_an_item_with_only_one_answer_does_not_count(self):

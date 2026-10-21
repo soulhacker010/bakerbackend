@@ -491,7 +491,7 @@ def return_to_play(questions: Sequence) -> ScoringCard:
         bands=_bands(
             ("significant-barriers", "Significant Reported Barriers", 0, 39,
              "The athlete reports substantial barriers to return. Further "
-             "evaluation and individualised intervention should be considered."),
+             "evaluation and individualized intervention should be considered."),
             ("reduced", "Reduced Readiness", 40, 54,
              "Substantial barriers may be present. Further evaluation and targeted "
              "intervention should be considered."),

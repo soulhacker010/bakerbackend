@@ -676,9 +676,11 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             score=score_payload,
             highlights=highlights,
             question_snapshot=snapshot_questions(assessment),
-            # A signed-in clinician recording answers is the rater; a respondent
-            # link sets its own rater after saving.
-            rater_role="clinician" if submitted_by else ("observer" if typed_rater else "client"),
+            # A typed observer name is who the result is from, even when a
+            # clinician enters the answers. Otherwise a signed-in clinician
+            # recording answers is the rater; a respondent link sets its own
+            # rater after saving.
+            rater_role="observer" if typed_rater else ("clinician" if submitted_by else "client"),
             rater_name=typed_rater or (
                 (" ".join(filter(None, [submitted_by.first_name, submitted_by.last_name])) or submitted_by.email)
                 if submitted_by else ""),
@@ -914,7 +916,15 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
                 )
 
         if method == AssessmentScoringConfig.Method.SUM:
-            return self._calculate_sum_score(configuration, responses)
+            # Typed answers are never part of a total: "Room 12 staff" in a name
+            # or comment box would otherwise add 12 to it.
+            typed = set(
+                assessment.questions.filter(response_type=AssessmentQuestion.ResponseType.FREE_TEXT)
+                .values_list("identifier", flat=True)
+            )
+            return self._calculate_sum_score(
+                configuration, {key: value for key, value in responses.items() if key not in typed}
+            )
 
         # Fallback for unsupported methods
         return ({"method": method}, [])

@@ -86,6 +86,21 @@ class ScoringIntegrationTests(TestCase):
         self.assertNotIn("scores", payload)   # the legacy shape, untouched
         self.assertEqual(highlights, ["Moderate; evaluation advised"])
 
+    def test_without_a_card_a_typed_answer_is_never_added(self):
+        """An observer's name or a comment with a number in it, such as
+        "Room 12 staff", once added 12 to the total (27 Oct 2026)."""
+        AssessmentQuestion.objects.create(
+            assessment=self.assessment,
+            identifier="observer-name",
+            order=0,
+            text="Observer name",
+            response_type=AssessmentQuestion.ResponseType.FREE_TEXT,
+            config={"role": "rater_name"},
+        )
+        serializer = AssessmentResponseSerializer()
+        payload, _ = serializer._calculate_score(self.assessment, dict(self.answers(), **{"observer-name": "Room 12 staff"}))
+        self.assertEqual(payload["total"], 38)
+
     def test_with_a_card_the_engine_takes_over(self):
         rules = [question_rule(q) for q in self.assessment.questions.all()]
         card = ScoringCard(questions=rules, scores=[ScoreRule(

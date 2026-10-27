@@ -393,3 +393,14 @@ class TypedObserverNameTests(RespondentEndToEndTests):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
         stored = AssessmentResponse.objects.get()
         self.assertEqual((stored.rater_role, stored.rater_name), ("observer", "Coach K"))
+
+    def test_a_clinician_entering_an_observer_form_records_the_observer(self):
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {self._login()}")
+        response = self.client.post(reverse("assessments:assessment-response-list"), data={
+            "assessment_slug": self.assessment.slug, "client_slug": self.client_record.slug,
+            "responses": [{"question_identifier": "observer-name", "value": "Coach 12"},
+                          {"question_identifier": "sleep", "value": 3},
+                          {"question_identifier": "mood", "value": 4}]}, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        stored = AssessmentResponse.objects.get()
+        self.assertEqual((stored.rater_role, stored.rater_name), ("observer", "Coach 12"))

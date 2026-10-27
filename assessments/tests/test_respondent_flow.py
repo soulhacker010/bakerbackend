@@ -360,3 +360,36 @@ class SecondRaterTests(RespondentEndToEndTests):
                 format="json")
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
         self.assertEqual(send.call_args[0][0].client_email, "pat@example.com")
+
+
+class TypedObserverNameTests(RespondentEndToEndTests):
+    """Joe, 27 Oct 2026: observer forms need a space to write in who is completing them."""
+
+    # Only this class's own test: the inherited ones assume the two-question form.
+    for _name in [n for n in dir(RespondentEndToEndTests) if n.startswith("test_")]:
+        locals()[_name] = None
+    del _name
+
+    def setUp(self):
+        super().setUp()
+        self.assessment.questions.create(
+            identifier="observer-name", order=0, text="Observer name", response_type="free_text",
+            required=True, config={"role": "rater_name"}, domain="notes")
+        card = self.assessment.scoring.configuration.get("card") if hasattr(self.assessment, "scoring") else None
+        if card:
+            card["questions"].append({"identifier": "observer-name", "domain": "notes", "scored": False})
+            self.assessment.scoring.save()
+
+    def test_the_typed_name_becomes_the_rater(self):
+        token = self._issue_token()
+        self.client.credentials()
+        response = self.client.post(reverse("assessments:respondent-link-assessment-response"), data={
+            "token": token, "response": {"assessment_slug": self.assessment.slug,
+                                         "client_slug": self.client_record.slug,
+                                         "responses": [{"question_identifier": "observer-name", "value": "Coach K"},
+                                                       {"question_identifier": "sleep", "value": 3},
+                                                       {"question_identifier": "mood", "value": 4}]}},
+            format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.content)
+        stored = AssessmentResponse.objects.get()
+        self.assertEqual((stored.rater_role, stored.rater_name), ("observer", "Coach K"))

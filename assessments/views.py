@@ -893,7 +893,8 @@ class RespondentAssessmentResponseView(APIView):
         instance = serializer.save()
         if link_payload.rater:
             instance.rater_role = link_payload.rater
-            instance.rater_name = link_payload.rater_name
+            # A name the observer typed themselves wins over the one on record.
+            instance.rater_name = instance.rater_name or link_payload.rater_name
             instance.save(update_fields=["rater_role", "rater_name"])
 
         mark_invite_used(token, assessment_slug)

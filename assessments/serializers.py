@@ -26,7 +26,7 @@ from .models import (
 )
 from .scoring.card import CardError
 from .scoring.loader import card_from_dict, expand_card, legacy_card
-from .scoring.service import has_card, score_response
+from .scoring.service import CRISIS_SUPPORT, has_card, score_response
 from .scoring.validation import ERROR, validate_card
 
 
@@ -571,6 +571,9 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
     responses = ResponseItemSerializer(many=True, write_only=True)
     client = serializers.SerializerMethodField(read_only=True)
     answers = serializers.SerializerMethodField(read_only=True)
+    # The practice's crisis numbers ride with every result, so a clinician's
+    # copy and its PDF can carry them too (Joe, 27 Oct 2026).
+    crisis_support = serializers.SerializerMethodField(read_only=True)
 
     def get_fields(self):
         # Client slugs are only unique per owner, so the lookup must be scoped to
@@ -606,6 +609,7 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             "answers",
             "rater_role",
             "rater_name",
+            "crisis_support",
         )
         read_only_fields = ("id", "client", "score", "highlights", "submitted_at", "answers",
                             "rater_role", "rater_name")
@@ -652,6 +656,14 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
 
         score_payload, highlights = self._calculate_score(assessment, response_map)
 
+        # An observer form asks the person completing it for their name (config
+        # role "rater_name"). That typed name is who the result is from.
+        typed_rater = ""
+        for identifier, question in question_map.items():
+            config = question.config if isinstance(question.config, dict) else {}
+            if config.get("role") == "rater_name" and isinstance(response_map.get(identifier), str):
+                typed_rater = response_map[identifier].strip()[:150]
+
         submitted_by = None
         if request and getattr(request, "user", None) and request.user.is_authenticated:
             submitted_by = request.user
@@ -666,9 +678,10 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
             question_snapshot=snapshot_questions(assessment),
             # A signed-in clinician recording answers is the rater; a respondent
             # link sets its own rater after saving.
-            rater_role="clinician" if submitted_by else "client",
-            rater_name=(" ".join(filter(None, [submitted_by.first_name, submitted_by.last_name])) or submitted_by.email)
-            if submitted_by else "",
+            rater_role="clinician" if submitted_by else ("observer" if typed_rater else "client"),
+            rater_name=typed_rater or (
+                (" ".join(filter(None, [submitted_by.first_name, submitted_by.last_name])) or submitted_by.email)
+                if submitted_by else ""),
         )
 
         recipients: list = []
@@ -786,6 +799,9 @@ class AssessmentResponseSerializer(serializers.ModelSerializer):
                 left.discard(hits[0])
 
         return matched
+
+    def get_crisis_support(self, obj: AssessmentResponse) -> dict[str, Any]:
+        return {"heading": CRISIS_SUPPORT["heading"], "lines": list(CRISIS_SUPPORT["lines"])}
 
     def get_answers(self, obj: AssessmentResponse) -> list[dict[str, Any]]:
         responses_payload = obj.responses if isinstance(obj.responses, dict) else {}

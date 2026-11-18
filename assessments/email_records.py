@@ -15,7 +15,7 @@ from django.utils import timezone
 from clients.models import Client
 
 from .email_invites import cancel_scheduled_email
-from .models import Assessment, AssessmentEmailRecord, RespondentInviteSchedule
+from .models import Assessment, AssessmentEmailRecord, RespondentInviteSchedule, RespondentInviteScheduleRun
 
 
 def recipient_label(client: Client, rater: str) -> str:
@@ -41,6 +41,7 @@ def record_email(
     provider_id: str = "",
     error: str = "",
     schedule: Optional[RespondentInviteSchedule] = None,
+    run: Optional[RespondentInviteScheduleRun] = None,
 ) -> AssessmentEmailRecord:
     slugs = list(dict.fromkeys(slug for slug in assessment_slugs if slug))
     titles = dict(Assessment.objects.filter(slug__in=slugs).values_list("slug", "title"))
@@ -59,15 +60,22 @@ def record_email(
         token=token,
         provider_id=provider_id,
         schedule=schedule,
+        run=run,
     )
 
 
 def cancel_queued_emails(schedule: RespondentInviteSchedule) -> int:
-    """Call back a schedule's emails that have not gone out yet. Returns how many."""
+    """Stop a schedule's emails that have not gone out yet. Returns how many.
+
+    Emails the platform sends itself are simply marked cancelled: their runs are
+    deleted with the schedule, so the sending job never sees them. Emails from
+    before November 2026 were handed to the provider in advance and have to be
+    called back there.
+    """
     cancelled = 0
     pending = schedule.email_records.filter(status=AssessmentEmailRecord.Status.SCHEDULED, send_at__gt=timezone.now())
     for record in pending:
-        reason = cancel_scheduled_email(record.provider_id)
+        reason = cancel_scheduled_email(record.provider_id) if record.provider_id else ""
         if not reason:
             record.status = AssessmentEmailRecord.Status.CANCELLED
             record.save(update_fields=["status"])

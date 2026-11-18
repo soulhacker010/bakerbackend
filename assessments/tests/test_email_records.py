@@ -97,31 +97,35 @@ class EmailRecordTests(APITestCase):
             "schedule": {"startDate": (timezone.now().date() + timedelta(days=1)).isoformat(),
                          "frequency": "week", "cycles": cycles}}, format="json")
 
-    @patch("assessments.views.send_assessment_invite_email", side_effect=["re_a", "re_b"])
-    def test_scheduled_emails_are_recorded_for_when_they_go_out(self, _send):
+    def test_scheduled_emails_are_recorded_for_when_they_go_out(self):
         self.assertEqual(self.schedule().status_code, status.HTTP_201_CREATED)
         records = self.history()
         self.assertEqual([r["status"] for r in records], ["scheduled", "scheduled"])
         self.assertEqual({r["kind"] for r in records}, {"scheduled"})
-        # Once its time has passed, a scheduled email reads as sent.
-        AssessmentEmailRecord.objects.filter(provider_id="re_a").update(send_at=timezone.now() - timedelta(hours=1))
-        self.assertEqual(sorted(r["status"] for r in self.history()), ["scheduled", "sent"])
+        # Overdue but not yet sent by the job: still Scheduled, never a false Sent.
+        AssessmentEmailRecord.objects.update(send_at=timezone.now() - timedelta(hours=1))
+        self.assertEqual([r["status"] for r in self.history()], ["scheduled", "scheduled"])
 
-    @patch("assessments.email_records.cancel_scheduled_email", return_value="")
-    @patch("assessments.views.send_assessment_invite_email", side_effect=["re_a", "re_b"])
-    def test_deleting_a_schedule_cancels_what_is_still_queued(self, _send, cancel):
+    @patch("assessments.email_records.cancel_scheduled_email")
+    def test_deleting_a_schedule_cancels_its_unsent_emails(self, cancel):
         reference = self.schedule().json()["scheduleId"]
         response = self.client.delete(reverse("assessments:respondent-link-schedule-detail", args=[reference]))
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
-        self.assertEqual(sorted(call.args[0] for call in cancel.call_args_list), ["re_a", "re_b"])
         self.assertEqual([r["status"] for r in self.history()], ["cancelled", "cancelled"])
+        cancel.assert_not_called()  # nothing was handed to the provider
 
     @patch("assessments.email_records.cancel_scheduled_email", return_value="")
-    @patch("assessments.views.send_assessment_invite_email", side_effect=["re_a", EmailInviteError("too far ahead")])
-    def test_a_schedule_that_fails_part_way_calls_back_the_ones_already_queued(self, _send, cancel):
-        self.assertEqual(self.schedule().status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertEqual([call.args[0] for call in cancel.call_args_list], ["re_a"])
-        self.assertEqual(sorted(r["status"] for r in self.history()), ["cancelled", "failed"])
+    def test_an_email_handed_over_the_old_way_is_called_back_at_the_provider(self, cancel):
+        reference = self.schedule(cycles=1).json()["scheduleId"]
+        AssessmentEmailRecord.objects.update(provider_id="re_old")
+        self.client.delete(reverse("assessments:respondent-link-schedule-detail", args=[reference]))
+        cancel.assert_called_once_with("re_old")
+        self.assertEqual(self.history()[0]["status"], "cancelled")
+
+    def test_an_old_way_email_reads_sent_once_its_time_passes(self):
+        self.schedule(cycles=1)
+        AssessmentEmailRecord.objects.update(provider_id="re_old", send_at=timezone.now() - timedelta(hours=1))
+        self.assertEqual(self.history()[0]["status"], "sent")
 
 
 class ProviderCallTests(APITestCase):

@@ -51,6 +51,7 @@ from .serializers import (
 )
 from .respondent_links import (
     RespondentLinkError,
+    validate_assessments,
     issue_link_token,
     refresh_token_for_client,
     resolve_link_token,
@@ -304,6 +305,13 @@ class RespondentLinkScheduleView(APIView):
 
         share_results = bool(payload.get("shareResults") or payload.get("share_results"))
 
+        # Links are made when each email goes out, so the assessments are
+        # checked now: an unpublished one must be refused here, not on the day.
+        try:
+            validate_assessments(request.user.id, assessments)
+        except RespondentLinkError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
         schedule = RespondentInviteSchedule.objects.create(
             owner=request.user,
             client=client,
@@ -312,6 +320,7 @@ class RespondentLinkScheduleView(APIView):
             message=email_config["message"],
             include_consent=email_config["include_consent"],
             share_results=share_results,
+            reply_to=email_config["reply_to"] or "",
             start_at=schedule_config["first_run"],
             frequency=schedule_config["frequency"],
             cycles=schedule_config["cycles"],
@@ -464,68 +473,27 @@ class RespondentLinkScheduleView(APIView):
         share_results: bool,
         email_config: dict,
     ):
+        # Nothing is sent or handed to the email provider here. Each email is
+        # sent on its day by the send_due_invites job, with a link made then
+        # (see scheduled_sending.py for why).
         runs: list[dict[str, str]] = []
-        try:
-            for index in range(cycles):
-                scheduled_at = first_run + timedelta(days=frequency_days * index)
-                token = issue_link_token(
-                    owner_id=request_user.id,
-                    assessments=assessments,
-                    mode="linked",
-                    client_slug=client.slug,
-                    share_results=share_results,
-                )
-
-                invite_url = build_invite_url(token)
-                record = dict(owner=request_user, client=client, recipient_email=client.email,
-                              assessment_slugs=assessments, subject=_normalise_subject(email_config["subject"]),
-                              send_at=scheduled_at, kind=AssessmentEmailRecord.Kind.SCHEDULED, token=token)
-
-                try:
-                    provider_id = send_assessment_invite_email(
-                        InviteContent(
-                            subject=email_config["subject"],
-                            message=email_config["message"],
-                            include_consent=email_config["include_consent"],
-                            invite_url=invite_url,
-                            client_email=client.email,
-                            reply_to=email_config["reply_to"],
-                            send_at=scheduled_at,
-                        )
-                    )
-                except EmailInviteError as exc:
-                    # The emails already queued for this schedule would still go
-                    # out after it is deleted, so they are called back first.
-                    cancel_queued_emails(schedule)
-                    record_email(**record, status=AssessmentEmailRecord.Status.FAILED, error=str(exc))
-                    schedule.delete()
-                    return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
-
-                record_email(**record, status=AssessmentEmailRecord.Status.SCHEDULED,
-                             provider_id=provider_id or "", schedule=schedule)
-
-                runs.append(
-                    {
-                        "token": token,
-                        "scheduledAt": scheduled_at.astimezone(dt_timezone.utc)
-                        .replace(microsecond=0)
-                        .isoformat()
-                        .replace("+00:00", "Z"),
-                    }
-                )
-
-                RespondentInviteScheduleRun.objects.create(
-                    schedule=schedule,
-                    token=token,
-                    scheduled_at=scheduled_at,
-                )
-
-        except RespondentLinkError as exc:
-            schedule.delete()
-            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-
-        invite_preview_url = build_invite_url(runs[0]["token"]) if runs else None
-        return runs, invite_preview_url
+        for index in range(cycles):
+            scheduled_at = first_run + timedelta(days=frequency_days * index)
+            run = RespondentInviteScheduleRun.objects.create(schedule=schedule, scheduled_at=scheduled_at)
+            record_email(owner=request_user, client=client, recipient_email=client.email,
+                         assessment_slugs=assessments, subject=_normalise_subject(email_config["subject"]),
+                         send_at=scheduled_at, kind=AssessmentEmailRecord.Kind.SCHEDULED,
+                         status=AssessmentEmailRecord.Status.SCHEDULED, schedule=schedule, run=run)
+            runs.append(
+                {
+                    "token": "",
+                    "scheduledAt": scheduled_at.astimezone(dt_timezone.utc)
+                    .replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
+                }
+            )
+        return runs, None
 
     def _notify_schedule_created(self, user, client: Client, assessments, schedule, runs: list[dict[str, str]]):
         try:

@@ -118,7 +118,7 @@ def rater_for(client: Client | None, rater: str | None) -> Tuple[str, str]:
     return rater, name
 
 
-def _validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> List[Assessment]:
+def validate_assessments(owner_id: int, assessment_slugs: Iterable[str]) -> List[Assessment]:
     slugs = list(dict.fromkeys(slug for slug in assessment_slugs if slug))
     if not slugs:
         raise RespondentLinkError("At least one assessment must be selected.")
@@ -195,7 +195,7 @@ def issue_link_token(
     max_uses: int | None = None,
     rater: str | None = None,
 ) -> str:
-    assessments = _validate_assessments(owner_id, assessments)
+    assessments = validate_assessments(owner_id, assessments)
 
     if max_uses is None:
         max_uses = len(assessments)

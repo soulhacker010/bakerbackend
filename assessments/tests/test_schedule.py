@@ -11,9 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from clients.models import Client
-from assessments.email_invites import EmailInviteError
-from assessments.models import Assessment
-from assessments.respondent_links import RespondentLinkError
+from assessments.models import Assessment, RespondentInviteScheduleRun
 
 
 class RespondentLinkScheduleViewTests(APITestCase):
@@ -62,11 +60,8 @@ class RespondentLinkScheduleViewTests(APITestCase):
         payload.update(overrides)
         return payload
 
-    @patch("assessments.views.send_assessment_invite_email", return_value="re_123")
-    @patch("assessments.views.issue_link_token", autospec=True)
-    def test_creates_runs_and_returns_schedule_details(self, mock_issue_token, mock_send_email):
-        mock_issue_token.return_value = "token-123"
-
+    @patch("assessments.views.send_assessment_invite_email")
+    def test_creates_runs_and_returns_schedule_details(self, mock_send_email):
         response = self.client.post(self.url, data=self._valid_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
@@ -74,9 +69,9 @@ class RespondentLinkScheduleViewTests(APITestCase):
 
         self.assertIn("scheduleId", body)
         self.assertEqual(len(body.get("runs", [])), 3)
-
-        self.assertEqual(mock_issue_token.call_count, 3)
-        self.assertEqual(mock_send_email.call_count, 3)
+        # Nothing goes out when the schedule is made; each email is sent on its day.
+        mock_send_email.assert_not_called()
+        self.assertEqual(RespondentInviteScheduleRun.objects.filter(token="", status="scheduled").count(), 3)
 
     def test_requires_client_slug(self):
         payload = self._valid_payload(clientSlug=None)
@@ -95,21 +90,14 @@ class RespondentLinkScheduleViewTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("format", response.json().get("detail", ""))
 
-    @patch("assessments.views.send_assessment_invite_email")
-    @patch("assessments.views.issue_link_token", side_effect=RespondentLinkError("failed"))
-    def test_handles_token_generation_errors(self, mock_issue_token, mock_send_email):
+    def test_refuses_an_unpublished_assessment_up_front(self):
+        self.assessment.status = Assessment.Status.DRAFT
+        self.assessment.save(update_fields=["status"])
+
         response = self.client.post(self.url, data=self._valid_payload(), format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("failed", response.json().get("detail", ""))
-        mock_send_email.assert_not_called()
-
-    @patch("assessments.views.send_assessment_invite_email", side_effect=EmailInviteError("email failure"))
-    def test_handles_email_failures(self, mock_send_email):
-        response = self.client.post(self.url, data=self._valid_payload(), format="json")
-
-        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
-        self.assertIn("email failure", response.json().get("detail", ""))
+        self.assertFalse(RespondentInviteScheduleRun.objects.exists())
 
     def test_requires_authenticated_user(self):
         self.client.logout()

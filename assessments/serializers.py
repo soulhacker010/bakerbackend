@@ -1153,8 +1153,11 @@ class AssessmentEmailRecordSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_status(self, obj: AssessmentEmailRecord) -> str:
-        # A scheduled email whose time has come has been sent by the provider.
-        if obj.status == AssessmentEmailRecord.Status.SCHEDULED and obj.send_at <= timezone.now():
+        # An email handed to the provider in advance (before Nov 2026) is sent by
+        # the provider when its time comes. One the platform sends itself only
+        # says Sent once it has gone.
+        if (obj.status == AssessmentEmailRecord.Status.SCHEDULED and obj.provider_id
+                and obj.send_at <= timezone.now()):
             return AssessmentEmailRecord.Status.SENT
         return obj.status
 

@@ -250,6 +250,7 @@ class RespondentInviteSchedule(models.Model):
     message = models.TextField(blank=True)
     include_consent = models.BooleanField(default=True)
     share_results = models.BooleanField(default=False)
+    reply_to = models.CharField(max_length=255, blank=True)
     start_at = models.DateTimeField()
     frequency = models.CharField(max_length=32)
     cycles = models.PositiveSmallIntegerField(default=1)
@@ -261,7 +262,9 @@ class RespondentInviteSchedule(models.Model):
 
 class RespondentInviteScheduleRun(models.Model):
     schedule = models.ForeignKey(RespondentInviteSchedule, related_name="runs", on_delete=models.CASCADE)
-    token = models.TextField()
+    # Made when the email goes out, so the link's 48 hours start then. Runs from
+    # before Nov 2026 were handed to the email provider in advance with a token.
+    token = models.TextField(blank=True, default="")
     scheduled_at = models.DateTimeField()
     sent_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=32, default="scheduled")
@@ -371,6 +374,13 @@ class AssessmentEmailRecord(models.Model):
     schedule = models.ForeignKey(
         RespondentInviteSchedule,
         related_name="email_records",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    run = models.OneToOneField(
+        RespondentInviteScheduleRun,
+        related_name="email_record",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

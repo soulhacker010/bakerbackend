@@ -19,13 +19,22 @@ from django.utils import timezone
 from notifications.models import Notification
 from notifications.services import create_notification
 
-from .email_invites import EmailInviteError, InviteContent, build_invite_url, send_assessment_invite_email
+from .email_invites import (
+    EmailInviteError,
+    InviteContent,
+    _normalise_subject,
+    build_invite_url,
+    send_assessment_invite_email,
+)
+from .email_records import cancel_queued_emails, record_email
 from .models import (
     Assessment,
     AssessmentBundle,
     AssessmentCategory,
+    AssessmentEmailRecord,
     AssessmentResponse,
     AssessmentTag,
+    RespondentInvite,
     RespondentInviteSchedule,
     RespondentInviteScheduleRun,
 )
@@ -34,6 +43,7 @@ from .scoring.service import for_respondent
 from .serializers import (
     AssessmentBundleSerializer,
     AssessmentCategorySerializer,
+    AssessmentEmailRecordSerializer,
     AssessmentResponseSerializer,
     AssessmentSerializer,
     AssessmentTagSerializer,
@@ -241,9 +251,11 @@ class RespondentLinkEmailInviteView(APIView):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         invite_url = build_invite_url(token)
+        record = dict(owner=request.user, client=client, recipient_email=recipient, assessment_slugs=assessments,
+                      subject=_normalise_subject(subject), send_at=timezone.now(), rater=rater, token=token)
 
         try:
-            send_assessment_invite_email(
+            provider_id = send_assessment_invite_email(
                 InviteContent(
                     subject=subject,
                     message=message,
@@ -254,8 +266,10 @@ class RespondentLinkEmailInviteView(APIView):
                 )
             )
         except EmailInviteError as exc:
+            record_email(**record, status=AssessmentEmailRecord.Status.FAILED, error=str(exc))
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
 
+        record_email(**record, provider_id=provider_id or "")
         return Response({"token": token}, status=status.HTTP_201_CREATED)
 
 
@@ -463,9 +477,12 @@ class RespondentLinkScheduleView(APIView):
                 )
 
                 invite_url = build_invite_url(token)
+                record = dict(owner=request_user, client=client, recipient_email=client.email,
+                              assessment_slugs=assessments, subject=_normalise_subject(email_config["subject"]),
+                              send_at=scheduled_at, kind=AssessmentEmailRecord.Kind.SCHEDULED, token=token)
 
                 try:
-                    send_assessment_invite_email(
+                    provider_id = send_assessment_invite_email(
                         InviteContent(
                             subject=email_config["subject"],
                             message=email_config["message"],
@@ -477,8 +494,15 @@ class RespondentLinkScheduleView(APIView):
                         )
                     )
                 except EmailInviteError as exc:
+                    # The emails already queued for this schedule would still go
+                    # out after it is deleted, so they are called back first.
+                    cancel_queued_emails(schedule)
+                    record_email(**record, status=AssessmentEmailRecord.Status.FAILED, error=str(exc))
                     schedule.delete()
                     return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+
+                record_email(**record, status=AssessmentEmailRecord.Status.SCHEDULED,
+                             provider_id=provider_id or "", schedule=schedule)
 
                 runs.append(
                     {
@@ -668,6 +692,9 @@ class RespondentLinkScheduleDetailView(APIView):
         if schedule is None:
             return Response({"detail": "Schedule not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        # Deleting the schedule here does not stop emails the provider is holding
+        # for later, so those are cancelled with it.
+        cancel_queued_emails(schedule)
         schedule.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -912,3 +939,28 @@ class RespondentAssessmentResponseView(APIView):
         # The respondent gets their own result, not the clinician's copy of it.
         response_data = for_respondent(AssessmentResponseSerializer(instance).data)
         return Response(response_data, status=status.HTTP_201_CREATED)
+
+class AssessmentEmailRecordListView(APIView):
+    """Every assessment email a clinician has sent, newest first.
+
+    ``?client=<slug>`` narrows it to one client; without it, all of the
+    clinician's clients are listed (the Assessments page).
+    """
+
+    permission_classes = (permissions.IsAuthenticated,)
+    _LIMIT = 500
+
+    def get(self, request, *args, **kwargs):
+        records = AssessmentEmailRecord.objects.filter(owner=request.user).select_related("client")
+        client_slug = request.query_params.get("client")
+        if client_slug:
+            client = Client.objects.filter(owner=request.user, slug=client_slug).first()
+            if client is None:
+                return Response({"detail": "Client could not be found for this clinician."},
+                                status=status.HTTP_404_NOT_FOUND)
+            records = records.filter(client=client)
+        records = list(records[: self._LIMIT])
+        tokens = [record.token for record in records if record.token]
+        progress = dict(RespondentInvite.objects.filter(token__in=tokens).values_list("token", "completed_assessments"))
+        serializer = AssessmentEmailRecordSerializer(records, many=True, context={"progress_by_token": progress})
+        return Response({"records": serializer.data})

@@ -14,6 +14,7 @@ from .views import (
     RespondentLinkIssueView,
     RespondentLinkResolveView,
     RespondentLinkScheduleRunListView,
+    AssessmentEmailRecordListView,
     RespondentLinkScheduleDetailView,
     RespondentLinkScheduleView,
 )
@@ -32,6 +33,7 @@ urlpatterns = router.urls + [
     path("respondent-links/resolve/", RespondentLinkResolveView.as_view(), name="respondent-link-resolve"),
     path("respondent-links/client/", RespondentLinkClientView.as_view(), name="respondent-link-client"),
     path("respondent-links/email/", RespondentLinkEmailInviteView.as_view(), name="respondent-link-email"),
+    path("email-records/", AssessmentEmailRecordListView.as_view(), name="email-records"),
     path("respondent-links/schedule/", RespondentLinkScheduleView.as_view(), name="respondent-link-schedule"),
     path(
         "respondent-links/schedule/runs/",

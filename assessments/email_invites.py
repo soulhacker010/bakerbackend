@@ -1,6 +1,7 @@
 """Helpers for emailing respondent assessment invites via Resend."""
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone as dt_timezone
 from typing import Optional
@@ -10,6 +11,8 @@ from django.conf import settings
 from django.utils import timezone
 
 import resend
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONSENT_TEXT = (
     "By completing these assessments you consent to Baker Street securely processing and storing your responses in line "
@@ -74,8 +77,12 @@ def _build_html_body(message: str, invite_url: str, include_consent: bool) -> st
     return "".join(paragraphs)
 
 
-def send_assessment_invite_email(content: InviteContent) -> None:
-    """Dispatch an assessment invite email using Resend."""
+def send_assessment_invite_email(content: InviteContent) -> str:
+    """Dispatch an assessment invite email using Resend.
+
+    Returns the provider's id for the email ("" if it gave none), which is what
+    a scheduled email is cancelled by.
+    """
 
     _require_settings()
 
@@ -108,10 +115,25 @@ def send_assessment_invite_email(content: InviteContent) -> None:
         payload["scheduled_at"] = scheduled_at_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     try:
-        resend.Emails.send(payload)
+        sent = resend.Emails.send(payload)
     except Exception as exc:  # pragma: no cover - network failure or API error
         reason = getattr(exc, "message", str(exc)) or "Unknown error"
         raise EmailInviteError(f"Unable to send assessment invite email: {reason}") from exc
+    return str((sent or {}).get("id") or "") if isinstance(sent, dict) else str(getattr(sent, "id", "") or "")
+
+
+def cancel_scheduled_email(provider_id: str) -> bool:
+    """Stop a scheduled email that has not gone out yet. True if the provider accepted."""
+    if not provider_id:
+        return False
+    _require_settings()
+    resend.api_key = settings.RESEND_API_KEY
+    try:
+        resend.Emails.cancel(email_id=provider_id)
+    except Exception:  # pragma: no cover - already sent, or the provider is unreachable
+        logger.warning("Could not cancel scheduled email %s", provider_id, exc_info=True)
+        return False
+    return True
 
 
 def build_invite_url(token: str) -> str:

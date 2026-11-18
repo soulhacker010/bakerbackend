@@ -353,7 +353,7 @@ class SecondRaterTests(RespondentEndToEndTests):
         from unittest.mock import patch
         access = self._login()
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {access}")
-        with patch("assessments.views.send_assessment_invite_email") as send:
+        with patch("assessments.views.send_assessment_invite_email", return_value="re_1") as send:
             response = self.client.post(reverse("assessments:respondent-link-email"), data={
                 "assessments": [self.assessment.slug], "clientSlug": self.client_record.slug,
                 "rater": "informant1", "email": {"subject": "Please rate Jordan", "message": "Thanks"}},

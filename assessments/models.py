@@ -323,6 +323,67 @@ class RespondentInvite(models.Model):
         return timezone.now() >= self.expires_at
 
 
+class AssessmentEmailRecord(models.Model):
+    """One assessment invitation emailed to a client or an informant.
+
+    The practice asked (Nov 2026) for a record of what was sent and when. The
+    email provider keeps its own copies for a few weeks only, so the record is
+    kept here, for as long as the practice keeps the client.
+    """
+
+    class Kind(models.TextChoices):
+        NOW = "now", "Sent now"
+        SCHEDULED = "scheduled", "Scheduled"
+
+    class Status(models.TextChoices):
+        SENT = "sent", "Sent"
+        SCHEDULED = "scheduled", "Scheduled"
+        FAILED = "failed", "Failed"
+        CANCELLED = "cancelled", "Cancelled"
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        related_name="assessment_email_records",
+        on_delete=models.CASCADE,
+    )
+    client = models.ForeignKey(
+        Client,
+        related_name="assessment_email_records",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    client_name = models.CharField(max_length=255, blank=True)
+    recipient_email = models.EmailField()
+    # Who the email went to: blank for the client, or "Informant - Pat Doe".
+    recipient_label = models.CharField(max_length=200, blank=True)
+    # Slugs and titles as they were when sent, so a later rename does not change history.
+    assessments = models.JSONField(default=list)
+    subject = models.CharField(max_length=255, blank=True)
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.NOW)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.SENT)
+    # When it went out, or is due to go out.
+    send_at = models.DateTimeField()
+    error = models.TextField(blank=True)
+    token = models.TextField(blank=True)
+    provider_id = models.CharField(max_length=100, blank=True)
+    schedule = models.ForeignKey(
+        RespondentInviteSchedule,
+        related_name="email_records",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ("-send_at", "-id")
+        indexes = (models.Index(fields=("owner", "client", "send_at")),)
+
+    def __str__(self) -> str:  # pragma: no cover - debug helper
+        return f"{self.recipient_email} @ {self.send_at:%Y-%m-%d %H:%M}"
+
+
 class AssessmentBundle(models.Model):
     """A named set of assessments sent together, such as a screening battery.
 

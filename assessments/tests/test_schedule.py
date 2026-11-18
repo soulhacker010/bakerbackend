@@ -62,7 +62,7 @@ class RespondentLinkScheduleViewTests(APITestCase):
         payload.update(overrides)
         return payload
 
-    @patch("assessments.views.send_assessment_invite_email")
+    @patch("assessments.views.send_assessment_invite_email", return_value="re_123")
     @patch("assessments.views.issue_link_token", autospec=True)
     def test_creates_runs_and_returns_schedule_details(self, mock_issue_token, mock_send_email):
         mock_issue_token.return_value = "token-123"

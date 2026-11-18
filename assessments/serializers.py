@@ -17,6 +17,7 @@ from .models import (
     AssessmentBundle,
     AssessmentBundleItem,
     AssessmentCategory,
+    AssessmentEmailRecord,
     AssessmentQuestion,
     AssessmentResponse,
     AssessmentScoringConfig,
@@ -1124,3 +1125,40 @@ class AssessmentBundleSerializer(serializers.ModelSerializer):
         )
         return data
 
+
+
+class AssessmentEmailRecordSerializer(serializers.ModelSerializer):
+    """One emailed invitation, with how far the person has got through it."""
+
+    client_slug = serializers.CharField(source="client.slug", read_only=True, default=None)
+    status = serializers.SerializerMethodField()
+    completed = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AssessmentEmailRecord
+        fields = (
+            "id",
+            "client_slug",
+            "client_name",
+            "recipient_email",
+            "recipient_label",
+            "assessments",
+            "subject",
+            "kind",
+            "status",
+            "send_at",
+            "error",
+            "completed",
+        )
+        read_only_fields = fields
+
+    def get_status(self, obj: AssessmentEmailRecord) -> str:
+        # A scheduled email whose time has come has been sent by the provider.
+        if obj.status == AssessmentEmailRecord.Status.SCHEDULED and obj.send_at <= timezone.now():
+            return AssessmentEmailRecord.Status.SENT
+        return obj.status
+
+    def get_completed(self, obj: AssessmentEmailRecord) -> list[str]:
+        """Slugs of the assessments already completed through this email's link."""
+        progress = self.context.get("progress_by_token") or {}
+        return list(progress.get(obj.token, []))

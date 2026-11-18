@@ -67,11 +67,12 @@ def cancel_queued_emails(schedule: RespondentInviteSchedule) -> int:
     cancelled = 0
     pending = schedule.email_records.filter(status=AssessmentEmailRecord.Status.SCHEDULED, send_at__gt=timezone.now())
     for record in pending:
-        if cancel_scheduled_email(record.provider_id):
+        reason = cancel_scheduled_email(record.provider_id)
+        if not reason:
             record.status = AssessmentEmailRecord.Status.CANCELLED
             record.save(update_fields=["status"])
             cancelled += 1
         else:
-            record.error = "Could not be cancelled with the email provider; it may still be sent."
+            record.error = f"Could not be cancelled with the email provider, so it may still be sent: {reason}"
             record.save(update_fields=["error"])
     return cancelled

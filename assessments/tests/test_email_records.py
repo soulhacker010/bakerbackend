@@ -107,7 +107,7 @@ class EmailRecordTests(APITestCase):
         AssessmentEmailRecord.objects.filter(provider_id="re_a").update(send_at=timezone.now() - timedelta(hours=1))
         self.assertEqual(sorted(r["status"] for r in self.history()), ["scheduled", "sent"])
 
-    @patch("assessments.email_records.cancel_scheduled_email", return_value=True)
+    @patch("assessments.email_records.cancel_scheduled_email", return_value="")
     @patch("assessments.views.send_assessment_invite_email", side_effect=["re_a", "re_b"])
     def test_deleting_a_schedule_cancels_what_is_still_queued(self, _send, cancel):
         reference = self.schedule().json()["scheduleId"]
@@ -116,7 +116,7 @@ class EmailRecordTests(APITestCase):
         self.assertEqual(sorted(call.args[0] for call in cancel.call_args_list), ["re_a", "re_b"])
         self.assertEqual([r["status"] for r in self.history()], ["cancelled", "cancelled"])
 
-    @patch("assessments.email_records.cancel_scheduled_email", return_value=True)
+    @patch("assessments.email_records.cancel_scheduled_email", return_value="")
     @patch("assessments.views.send_assessment_invite_email", side_effect=["re_a", EmailInviteError("too far ahead")])
     def test_a_schedule_that_fails_part_way_calls_back_the_ones_already_queued(self, _send, cancel):
         self.assertEqual(self.schedule().status_code, status.HTTP_502_BAD_GATEWAY)
@@ -142,6 +142,12 @@ class ProviderCallTests(APITestCase):
     @patch("assessments.email_invites.resend.Emails.cancel", create=True)
     def test_cancelling_names_the_email(self, cancel, _settings):
         from assessments.email_invites import cancel_scheduled_email
-        self.assertTrue(cancel_scheduled_email("re_42"))
+        self.assertEqual(cancel_scheduled_email("re_42"), "")
         cancel.assert_called_once_with(email_id="re_42")
-        self.assertFalse(cancel_scheduled_email(""))
+        self.assertIn("No email id", cancel_scheduled_email(""))
+
+    @patch("assessments.email_invites._require_settings")
+    @patch("assessments.email_invites.resend.Emails.cancel", create=True, side_effect=Exception("key lacks permission"))
+    def test_a_refused_cancel_keeps_the_reason(self, _cancel, _settings):
+        from assessments.email_invites import cancel_scheduled_email
+        self.assertIn("key lacks permission", cancel_scheduled_email("re_42"))

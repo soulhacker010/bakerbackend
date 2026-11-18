@@ -122,18 +122,22 @@ def send_assessment_invite_email(content: InviteContent) -> str:
     return str((sent or {}).get("id") or "") if isinstance(sent, dict) else str(getattr(sent, "id", "") or "")
 
 
-def cancel_scheduled_email(provider_id: str) -> bool:
-    """Stop a scheduled email that has not gone out yet. True if the provider accepted."""
+def cancel_scheduled_email(provider_id: str) -> str:
+    """Stop a scheduled email that has not gone out yet.
+
+    Returns "" when the provider accepted, otherwise its reason, which is kept on
+    the record so a refusal can be read rather than guessed at.
+    """
     if not provider_id:
-        return False
+        return "No email id was recorded for this email."
     _require_settings()
     resend.api_key = settings.RESEND_API_KEY
     try:
         resend.Emails.cancel(email_id=provider_id)
-    except Exception:  # pragma: no cover - already sent, or the provider is unreachable
+    except Exception as exc:  # already sent, refused, or the provider is unreachable
         logger.warning("Could not cancel scheduled email %s", provider_id, exc_info=True)
-        return False
-    return True
+        return str(getattr(exc, "message", "") or exc or "Unknown error")[:500]
+    return ""
 
 
 def build_invite_url(token: str) -> str:

@@ -83,6 +83,13 @@ class EmailRecordTests(APITestCase):
         response = self.client.get(reverse("assessments:email-records"), {"client": "jordan-lee"})
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    @patch("assessments.views.send_assessment_invite_email", return_value="re_1")
+    def test_deleting_a_client_deletes_their_email_history(self, _send):
+        self.email_now()
+        self.assertEqual(self.client.delete(reverse("clients:client-detail", args=["jordan-lee"])).status_code,
+                         status.HTTP_204_NO_CONTENT)
+        self.assertFalse(AssessmentEmailRecord.objects.exists())
+
     def schedule(self, cycles=2):
         return self.client.post(reverse("assessments:respondent-link-schedule"), data={
             "assessments": ["phq-9"], "clientSlug": "jordan-lee",

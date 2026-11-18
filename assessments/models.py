@@ -328,7 +328,7 @@ class AssessmentEmailRecord(models.Model):
 
     The practice asked (Nov 2026) for a record of what was sent and when. The
     email provider keeps its own copies for a few weeks only, so the record is
-    kept here, for as long as the practice keeps the client.
+    kept here, for as long as the practice keeps the client - and goes with them.
     """
 
     class Kind(models.TextChoices):
@@ -346,10 +346,11 @@ class AssessmentEmailRecord(models.Model):
         related_name="assessment_email_records",
         on_delete=models.CASCADE,
     )
+    # Deleting a client deletes their email history: it holds their address.
     client = models.ForeignKey(
         Client,
         related_name="assessment_email_records",
-        on_delete=models.SET_NULL,
+        on_delete=models.CASCADE,
         null=True,
         blank=True,
     )
